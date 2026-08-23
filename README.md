@@ -5,8 +5,17 @@ the pitch of whatever comes in on the audio input, shows the notes you play on
 a MIDI keyboard, draws both on a grand staff, and makes a piano sound when you
 press a key.
 
+It also writes its own sight-reading exercises, graded 1 to 8, and rehearses
+them with you a note at a time - listening to your voice or your keyboard, and
+waiting until you get each one right.
+
 Standalone JUCE app for Windows, with optional ASIO audio and VST3 instrument
 hosting.
+
+> This is my first project, and it was wibecoded from start to finish with
+> Claude - every line of it, across one long conversation. I decided what it
+> should do and what was worth building; Claude wrote it, tested it, and argued
+> back when something was a bad idea.
 
 ## What it does
 
