@@ -1,0 +1,8 @@
+# Let git normalise line endings for text, and check out whatever is native.
+* text=auto
+
+# Fonts are binary. Saying so explicitly matters: a line-ending conversion
+# applied to a .ttf silently corrupts it, and the failure looks like missing
+# glyphs rather than a broken file.
+*.ttf binary
+*.otf binary
