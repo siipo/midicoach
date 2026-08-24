@@ -40,7 +40,16 @@ public:
     /** A blank line, to separate one idea from the next. */
     void addGap();
 
-    int getPreferredWidth() const noexcept  { return 320; }
+    /** A line of plain text, for a panel that explains rather than adjusts. */
+    void addText (juce::String line);
+
+    /** One keyboard shortcut: the keys in a column of their own, so a list of
+        them lines up instead of relying on spaces in a proportional font. */
+    void addShortcut (juce::String keys, juce::String what);
+
+    void setPreferredWidth (int width) noexcept { preferredWidth = width; }
+
+    int getPreferredWidth() const noexcept  { return preferredWidth; }
     int getPreferredHeight() const;
 
     void paint (juce::Graphics& g) override;
@@ -50,16 +59,21 @@ private:
     struct Row
     {
         juce::String caption;
+        juce::String detail;     ///< set only on a shortcut line
         juce::Component* left  = nullptr;
         juce::Component* right = nullptr;
         bool split = false;      ///< two equal halves rather than caption + control
     };
 
+    int preferredWidth = 320;
+
     static constexpr int rowHeight   = 28;
+    static constexpr int textHeight  = 20;
     static constexpr int gapHeight   = 10;
     static constexpr int titleHeight = 26;
     static constexpr int margin      = 12;
     static constexpr int captionWidth = 104;
+    static constexpr int shortcutWidth = 116;
 
     juce::String title;
     std::vector<Row> rows;

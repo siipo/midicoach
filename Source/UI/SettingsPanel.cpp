@@ -15,7 +15,7 @@ SettingsPanel::SettingsPanel (juce::String panelTitle)
 void SettingsPanel::addRow (juce::String caption, juce::Component& control)
 {
     addAndMakeVisible (control);
-    rows.push_back ({ std::move (caption), &control, nullptr, false });
+    rows.push_back ({ std::move (caption), {}, &control, nullptr, false });
 }
 
 void SettingsPanel::addRow (juce::String caption, juce::Component& left,
@@ -23,19 +23,29 @@ void SettingsPanel::addRow (juce::String caption, juce::Component& left,
 {
     addAndMakeVisible (left);
     addAndMakeVisible (right);
-    rows.push_back ({ std::move (caption), &left, &right, false });
+    rows.push_back ({ std::move (caption), {}, &left, &right, false });
 }
 
 void SettingsPanel::addToggles (juce::Component& left, juce::Component& right)
 {
     addAndMakeVisible (left);
     addAndMakeVisible (right);
-    rows.push_back ({ {}, &left, &right, true });
+    rows.push_back ({ {}, {}, &left, &right, true });
 }
 
 void SettingsPanel::addGap()
 {
-    rows.push_back ({ {}, nullptr, nullptr, false });
+    rows.push_back ({ {}, {}, nullptr, nullptr, false });
+}
+
+void SettingsPanel::addText (juce::String line)
+{
+    rows.push_back ({ std::move (line), {}, nullptr, nullptr, false });
+}
+
+void SettingsPanel::addShortcut (juce::String keys, juce::String what)
+{
+    rows.push_back ({ std::move (keys), std::move (what), nullptr, nullptr, false });
 }
 
 int SettingsPanel::getPreferredHeight() const
@@ -43,7 +53,11 @@ int SettingsPanel::getPreferredHeight() const
     auto height = titleHeight + margin * 2;
 
     for (const auto& row : rows)
-        height += row.left == nullptr ? gapHeight : rowHeight;
+    {
+        if (row.left != nullptr)      height += rowHeight;
+        else if (row.caption.isEmpty()) height += gapHeight;
+        else                          height += textHeight;
+    }
 
     return height;
 }
@@ -71,7 +85,34 @@ void SettingsPanel::paint (juce::Graphics& g)
     {
         if (row.left == nullptr)
         {
-            y += gapHeight;
+            // A line of text, or a blank one.
+            if (row.caption.isNotEmpty())
+            {
+                if (row.detail.isNotEmpty())
+                {
+                    g.setColour (palette::detectedNote);
+                    g.drawText (row.caption, margin, y, shortcutWidth, textHeight,
+                                juce::Justification::centredLeft, false);
+                    g.setColour (palette::ink);
+                    g.drawText (row.detail, margin + shortcutWidth, y,
+                                getWidth() - margin * 2 - shortcutWidth, textHeight,
+                                juce::Justification::centredLeft, false);
+                }
+                else
+                {
+                    g.setColour (palette::ink);
+                    g.drawText (row.caption, margin, y, getWidth() - margin * 2, textHeight,
+                                juce::Justification::centredLeft, false);
+                }
+
+                g.setColour (palette::inkDim);
+                y += textHeight;
+            }
+            else
+            {
+                y += gapHeight;
+            }
+
             continue;
         }
 
@@ -92,7 +133,7 @@ void SettingsPanel::resized()
     {
         if (row.left == nullptr)
         {
-            area.removeFromTop (gapHeight);
+            area.removeFromTop (row.caption.isNotEmpty() ? textHeight : gapHeight);
             continue;
         }
 

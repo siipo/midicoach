@@ -128,6 +128,18 @@ public:
     /** Replaces the contents of a span with rests. */
     void eraseRange (int startTick, int lengthTicks);
 
+    /** Moves every note starting inside a span by some semitones.
+
+        Rests are left alone, and a note is moved whole however many tied pieces
+        it was written as, so transposing a selection cannot pull the halves of
+        one note apart.
+
+        Returns false and changes nothing if any note would leave the MIDI
+        range, so a transpose is all-or-nothing rather than silently flattening
+        the top of a phrase against the ceiling.
+    */
+    bool transposeRange (int startTick, int lengthTicks, int semitones);
+
     void clear();
 
     /** One sounding note: tied pieces merged back into a single note, which is

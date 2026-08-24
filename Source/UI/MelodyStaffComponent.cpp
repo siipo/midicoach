@@ -57,6 +57,13 @@ MelodyStaffComponent::MelodyStaffComponent()
 
 void MelodyStaffComponent::setMelody (const model::Melody& newMelody)
 {
+    // Replacing the music wholesale - loading, generating, importing - is not an
+    // edit, and undoing back into a tune you have left would be surprising.
+    undoStack.clear();
+    redoStack.clear();
+    selectionStart  = 0;
+    selectionLength = 0;
+
     melody = newMelody;
     rebuildLayout();
     repaint();
@@ -760,6 +767,7 @@ void MelodyStaffComponent::paint (juce::Graphics& g)
         const auto& system   = systems[systemIndex];
         const auto  geometry = geometryForSystem (system);
 
+        drawSelection (g, geometry, (int) systemIndex);
         drawSystemFurniture (g, system, font, systemIndex == 0);
         drawBarLines (g, geometry, system);
         drawBeams (g, geometry, (int) systemIndex);
@@ -785,7 +793,9 @@ void MelodyStaffComponent::paint (juce::Graphics& g)
 
     drawPlayhead (g);
 
-    if (editEnabled && ! printMode)
+    // Only while writing: a caret means "the next thing you type lands here",
+    // which is not true when the click selects instead.
+    if (editEnabled && ! printMode && tool == StaffTool::write)
     {
         drawCaret (g);
         drawShadowNote (g, font);
@@ -899,6 +909,17 @@ MelodyStaffComponent::HitPosition MelodyStaffComponent::hitTest (juce::Point<flo
 //==============================================================================
 void MelodyStaffComponent::mouseMove (const juce::MouseEvent& event)
 {
+    if (tool == StaffTool::select)
+    {
+        if (hover.valid)
+        {
+            hover = {};
+            repaint();
+        }
+
+        return;
+    }
+
     if (! editEnabled)
         return;
 
@@ -921,6 +942,33 @@ void MelodyStaffComponent::mouseExit (const juce::MouseEvent&)
 
 void MelodyStaffComponent::mouseDown (const juce::MouseEvent& event)
 {
+    if (editEnabled && tool == StaffTool::select)
+    {
+        const auto hit = hitTest (event.position.toFloat());
+
+        if (! hit.valid)
+            return;
+
+        const auto* target = eventForTick (hit.tick);
+        const auto length = target != nullptr ? target->lengthTicks : 0;
+
+        // Shift stretches the selection from where it started, the way a shifted
+        // click extends a range in a list.
+        if (event.mods.isShiftDown() && hasSelection())
+        {
+            const auto from = juce::jmin (selectionStart, hit.tick);
+            const auto to   = juce::jmax (selectionStart + selectionLength, hit.tick + length);
+            setSelection (from, to - from);
+        }
+        else
+        {
+            setSelection (hit.tick, length);
+        }
+
+        grabKeyboardFocus();
+        return;
+    }
+
     if (! editEnabled)
         return;
 
@@ -932,8 +980,205 @@ void MelodyStaffComponent::mouseDown (const juce::MouseEvent& event)
         placeAt (hit.tick, scale.noteForDiatonicStep (hit.step), restMode);
 }
 
+void MelodyStaffComponent::pushUndo()
+{
+    undoStack.push_back (melody);
+
+    if (undoStack.size() > maxUndoDepth)
+        undoStack.erase (undoStack.begin());
+
+    // A fresh edit is a new branch: whatever was undone is no longer reachable.
+    redoStack.clear();
+}
+
+void MelodyStaffComponent::notifyEditState()
+{
+    if (onEditStateChanged != nullptr)
+        onEditStateChanged();
+}
+
+void MelodyStaffComponent::undo()
+{
+    if (undoStack.empty())
+        return;
+
+    redoStack.push_back (melody);
+    melody = undoStack.back();
+    undoStack.pop_back();
+
+    clearSelection();
+    rebuildLayout();
+    repaint();
+    notifyEditState();
+
+    if (onMelodyChanged != nullptr)
+        onMelodyChanged();
+}
+
+void MelodyStaffComponent::redo()
+{
+    if (redoStack.empty())
+        return;
+
+    undoStack.push_back (melody);
+    melody = redoStack.back();
+    redoStack.pop_back();
+
+    clearSelection();
+    rebuildLayout();
+    repaint();
+    notifyEditState();
+
+    if (onMelodyChanged != nullptr)
+        onMelodyChanged();
+}
+
+//==============================================================================
+void MelodyStaffComponent::setTool (StaffTool newTool)
+{
+    if (tool == newTool)
+        return;
+
+    tool = newTool;
+
+    // The two tools do not share a cursor: a caret means "the next thing you
+    // type lands here", which is only true while writing.
+    if (tool == StaffTool::select)
+        hover = {};
+    else
+        clearSelection();
+
+    repaint();
+    notifyEditState();
+}
+
+void MelodyStaffComponent::setSelection (int startTick, int lengthTicks)
+{
+    selectionStart  = juce::jlimit (0, melody.getTotalTicks(), startTick);
+    selectionLength = juce::jlimit (0, melody.getTotalTicks() - selectionStart, lengthTicks);
+
+    if (selectionLength > 0)
+        keepTickVisible (selectionStart);
+
+    repaint();
+    notifyEditState();
+}
+
+void MelodyStaffComponent::selectAll()
+{
+    setTool (StaffTool::select);
+    setSelection (0, melody.getTotalTicks());
+}
+
+void MelodyStaffComponent::clearSelection()
+{
+    selectionStart  = 0;
+    selectionLength = 0;
+    repaint();
+    notifyEditState();
+}
+
+/** Moves the selection one written event at a time, or stretches it. */
+void MelodyStaffComponent::moveSelection (int direction, bool extend)
+{
+    if (laidOut.empty())
+        return;
+
+    if (! hasSelection())
+    {
+        setSelection (laidOut.front().startTick, laidOut.front().lengthTicks);
+        return;
+    }
+
+    const auto end = selectionStart + selectionLength;
+
+    if (extend)
+    {
+        // Growing and shrinking both act on the far end, which is what a shifted
+        // arrow does everywhere else.
+        if (direction > 0)
+        {
+            for (const auto& event : laidOut)
+                if (event.startTick >= end)
+                {
+                    setSelection (selectionStart, event.endTick() - selectionStart);
+                    return;
+                }
+        }
+        else
+        {
+            for (auto it = laidOut.rbegin(); it != laidOut.rend(); ++it)
+                if (it->endTick() < end && it->endTick() > selectionStart)
+                {
+                    setSelection (selectionStart, it->endTick() - selectionStart);
+                    return;
+                }
+        }
+
+        return;
+    }
+
+    if (direction > 0)
+    {
+        for (const auto& event : laidOut)
+            if (event.startTick >= end)
+            {
+                setSelection (event.startTick, event.lengthTicks);
+                return;
+            }
+    }
+    else
+    {
+        for (auto it = laidOut.rbegin(); it != laidOut.rend(); ++it)
+            if (it->startTick < selectionStart)
+            {
+                setSelection (it->startTick, it->lengthTicks);
+                return;
+            }
+    }
+}
+
+void MelodyStaffComponent::transposeSelection (int semitones)
+{
+    if (! hasSelection())
+        return;
+
+    pushUndo();
+
+    if (! melody.transposeRange (selectionStart, selectionLength, semitones))
+    {
+        undoStack.pop_back();     // nothing moved, so there is nothing to undo
+        return;
+    }
+
+    rebuildLayout();
+    repaint();
+    notifyEditState();
+
+    if (onMelodyChanged != nullptr)
+        onMelodyChanged();
+}
+
+void MelodyStaffComponent::deleteSelection()
+{
+    if (! hasSelection())
+        return;
+
+    pushUndo();
+    melody.eraseRange (selectionStart, selectionLength);
+
+    rebuildLayout();
+    repaint();
+    notifyEditState();
+
+    if (onMelodyChanged != nullptr)
+        onMelodyChanged();
+}
+
+//==============================================================================
 void MelodyStaffComponent::placeAt (int tick, int midiNote, bool rest)
 {
+    pushUndo();
     melody.placeEvent (tick, noteValueTicks, midiNote, rest);
 
     lastPlacedTick = tick;
@@ -987,6 +1232,8 @@ void MelodyStaffComponent::moveCaret (int direction)
 
 void MelodyStaffComponent::nudgeLastNote (int semitones)
 {
+    pushUndo();
+
     if (lastPlacedTick < 0)
         return;
 
@@ -1013,6 +1260,8 @@ void MelodyStaffComponent::nudgeLastNote (int semitones)
 
 void MelodyStaffComponent::deleteBeforeCaret()
 {
+    pushUndo();
+
     const LaidOutEvent* target = nullptr;
 
     for (const auto& event : laidOut)
@@ -1041,10 +1290,66 @@ bool MelodyStaffComponent::keyPressed (const juce::KeyPress& key)
     if (! editEnabled)
         return false;
 
-    const auto code = key.getKeyCode();
-    const auto withCommand = key.getModifiers().isCommandDown();
+    const auto code        = key.getKeyCode();
+    const auto mods        = key.getModifiers();
+    const auto withCommand = mods.isCommandDown();
+    const auto erase       = key.isKeyCode (juce::KeyPress::backspaceKey)
+                               || key.isKeyCode (juce::KeyPress::deleteKey);
 
-    // Note values on the number row, as every notation editor does it.
+    // --- whatever the tool ---------------------------------------------------
+    if (withCommand && code == 'Z')
+    {
+        mods.isShiftDown() ? redo() : undo();
+        return true;
+    }
+
+    if (withCommand && code == 'Y') { redo(); return true; }
+    if (withCommand && code == 'A') { selectAll(); return true; }
+
+    // N for note input is MuseScore's binding, and Sibelius and Dorico both put
+    // escape on the way back out. Following them costs nothing and means anyone
+    // who has used notation software already knows this.
+    if (code == 'N')
+    {
+        if (tool == StaffTool::write)
+        {
+            setTool (StaffTool::select);
+        }
+        else
+        {
+            // Carry on from whatever was selected rather than from wherever the
+            // caret was left the last time.
+            if (hasSelection())
+                setCaretTick (selectionStart);
+
+            setTool (StaffTool::write);
+        }
+
+        if (onMelodyChanged != nullptr)
+            onMelodyChanged();
+
+        return true;
+    }
+
+    if (key.isKeyCode (juce::KeyPress::escapeKey))
+    {
+        if (tool == StaffTool::write)
+        {
+            setTool (StaffTool::select);
+
+            if (onMelodyChanged != nullptr)
+                onMelodyChanged();
+        }
+        else
+        {
+            clearSelection();
+        }
+
+        return true;
+    }
+
+    // The pen: which value the next note will be written as. Worth having in
+    // either tool, so the duration can be lined up before entering input.
     static const int valueTicks[5] = { 3840, 1920, 960, 480, 240 };
 
     for (int i = 0; i < 5; ++i)
@@ -1081,12 +1386,49 @@ bool MelodyStaffComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
+    // --- selecting -----------------------------------------------------------
+    if (tool == StaffTool::select)
+    {
+        if (key.isKeyCode (juce::KeyPress::leftKey))
+        {
+            moveSelection (-1, mods.isShiftDown());
+            return true;
+        }
+
+        if (key.isKeyCode (juce::KeyPress::rightKey))
+        {
+            moveSelection (1, mods.isShiftDown());
+            return true;
+        }
+
+        if (key.isKeyCode (juce::KeyPress::upKey))
+        {
+            transposeSelection (withCommand ? 12 : 1);
+            return true;
+        }
+
+        if (key.isKeyCode (juce::KeyPress::downKey))
+        {
+            transposeSelection (withCommand ? -12 : -1);
+            return true;
+        }
+
+        if (erase)
+        {
+            deleteSelection();
+            return true;
+        }
+
+        return false;
+    }
+
+    // --- writing -------------------------------------------------------------
     if (key.isKeyCode (juce::KeyPress::leftKey))  { moveCaret (-1); return true; }
     if (key.isKeyCode (juce::KeyPress::rightKey)) { moveCaret (1);  return true; }
     if (key.isKeyCode (juce::KeyPress::upKey))    { nudgeLastNote (withCommand ? 12 : 1);   return true; }
     if (key.isKeyCode (juce::KeyPress::downKey))  { nudgeLastNote (withCommand ? -12 : -1); return true; }
 
-    if (key.isKeyCode (juce::KeyPress::backspaceKey) || key.isKeyCode (juce::KeyPress::deleteKey))
+    if (erase)
     {
         deleteBeforeCaret();
         return true;
@@ -1297,6 +1639,41 @@ void MelodyStaffComponent::drawEvent (juce::Graphics& g, const StaffGeometry& ge
         musicFont::drawGlyph (g, font, musicFont::augmentationDot,
                               event.x + noteheadWidth * 1.25f, geometry.yForStep (dotStep));
     }
+}
+
+/** A wash behind the selected notes, one band per system it reaches across. */
+void MelodyStaffComponent::drawSelection (juce::Graphics& g, const StaffGeometry& geometry,
+                                          int systemIndex) const
+{
+    if (! hasSelection() || printMode)
+        return;
+
+    const auto end = selectionStart + selectionLength;
+
+    auto left = 0.0f, right = 0.0f;
+    auto found = false;
+
+    for (const auto& event : laidOut)
+    {
+        if (event.systemIndex != systemIndex
+             || event.endTick() <= selectionStart
+             || event.startTick >= end)
+            continue;
+
+        const auto from = event.slotX;
+        const auto to   = event.slotX + event.width;
+
+        left  = found ? juce::jmin (left, from)  : from;
+        right = found ? juce::jmax (right, to)   : to;
+        found = true;
+    }
+
+    if (! found)
+        return;
+
+    g.setColour (palette::midiNote.withAlpha (0.20f));
+    g.fillRoundedRectangle (left - staffSpace * 0.2f, geometry.topLineY() - staffSpace * 1.6f,
+                            right - left + staffSpace * 0.4f, staffSpace * 7.2f, staffSpace * 0.2f);
 }
 
 void MelodyStaffComponent::drawTie (juce::Graphics& g, const StaffGeometry& geometry,

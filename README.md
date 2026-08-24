@@ -56,8 +56,12 @@ hosting.
   the same MIDI stream as the built-in piano and mixed alongside it.
 - **Tunes** (in progress) — write short melodies by picking a duration and
   clicking the staff, and save them as JSON under `%APPDATA%\MidiCoach\Tunes`.
-  The engraver handles bar lines, time signatures, note values, dots, rests,
-  ties, accidentals and beams - eighths and shorter are joined under a beam,
+  There are two tools, as in any notation editor: **Select** for picking notes
+  to transpose or delete, and **Write** for putting them in - `N` and `Esc`
+  between them, arrows to move, shifted arrows to extend, `ctrl+Z` to undo. Up
+  to 256 bars, and the staff scrolls at a readable size rather than shrinking
+  to fit. The engraver handles bar lines, time signatures, note values, dots,
+  rests, ties, accidentals and beams - eighths and shorter are joined under a beam,
   grouped by the beat the metre is felt in, so 6/8 gets three to a beam and 4/4
   gets two. **Rehearse** then steps through the tune one note at a
   time, waiting for each note to be played or sung before moving on, with
@@ -229,6 +233,17 @@ cmake --build build --config Release --target ExportTests
 
 ```bash
 ./build/ExportTests_artefacts/Release/ExportTests.exe
+```
+
+The staff editor has its own suite, driving the real key handler with real
+key presses - selection, transposition, undo and the tool switching:
+
+```bash
+cmake --build build --config Release --target EditorTests
+```
+
+```bash
+./build/EditorTests_artefacts/Release/EditorTests.exe
 ```
 
 The exercise generator is checked by asserting musical invariants over 25,536

@@ -122,6 +122,24 @@ void Melody::setTranspose (int semitones)
     transpose = juce::jlimit (-24, 24, semitones);
 }
 
+bool Melody::transposeRange (int startTick, int lengthTicks, int semitones)
+{
+    const auto endTick = startTick + lengthTicks;
+
+    // Check the whole span first. Half a transposed phrase is worse than none,
+    // and clamping at the edges would quietly change the intervals.
+    for (const auto& event : events)
+        if (! event.isRest && event.startTick < endTick && event.endTick() > startTick)
+            if (event.midiNote + semitones < 0 || event.midiNote + semitones > 127)
+                return false;
+
+    for (auto& event : events)
+        if (! event.isRest && event.startTick < endTick && event.endTick() > startTick)
+            event.midiNote += semitones;
+
+    return true;
+}
+
 void Melody::clear()
 {
     events.clear();

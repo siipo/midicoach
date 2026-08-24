@@ -550,6 +550,83 @@ int main()
         }
     }
 
+    // -- transposing a span ----------------------------------------------------
+    //
+    // What the selection tool does when you press an arrow. The interesting
+    // cases are the edges: a note that would leave the MIDI range must stop the
+    // whole move rather than being clamped, because clamping one note silently
+    // rewrites the intervals around it.
+    {
+        model::Melody tune;
+        tune.setBarCount (2);
+        tune.placeEvent (0, model::ticksPerQuarter, 60, false);
+        tune.placeEvent (model::ticksPerQuarter, model::ticksPerQuarter, 64, false);
+        tune.placeEvent (2 * model::ticksPerQuarter, model::ticksPerQuarter, 67, false);
+
+        check (tune.transposeRange (0, model::ticksPerQuarter * 2, 2),
+               "a transpose inside the range succeeds");
+
+        auto notes = tune.getRehearsalNotes();
+        checkEqual ((int) notes.size(), 3, "still three notes");
+
+        if (notes.size() == 3)
+        {
+            checkEqual (notes[0], 62, "the first note moved up a tone");
+            checkEqual (notes[1], 66, "and so did the second");
+            checkEqual (notes[2], 67, "the note outside the span did not");
+        }
+
+        // Rests are not notes and must come through untouched.
+        model::Melody withRest;
+        withRest.setBarCount (1);
+        withRest.placeEvent (0, model::ticksPerQuarter, 60, false);
+        withRest.placeEvent (model::ticksPerQuarter, model::ticksPerQuarter, 0, true);
+        withRest.transposeRange (0, withRest.getTotalTicks(), 3);
+
+        auto rests = 0;
+
+        for (const auto& event : withRest.getEvents())
+            if (event.isRest)
+                ++rests;
+
+        check (rests > 0, "rests survive a transpose");
+
+        // All or nothing at the ceiling.
+        model::Melody high;
+        high.setBarCount (1);
+        high.placeEvent (0, model::ticksPerQuarter, 60, false);
+        high.placeEvent (model::ticksPerQuarter, model::ticksPerQuarter, 126, false);
+
+        check (! high.transposeRange (0, high.getTotalTicks(), 6),
+               "a transpose that would run past MIDI 127 is refused");
+
+        const auto after = high.getRehearsalNotes();
+
+        if (after.size() >= 2)
+        {
+            checkEqual (after[0], 60, "and nothing moved");
+            checkEqual (after[1], 126, "not even the note that had room");
+        }
+    }
+
+    // -- the bar ceiling -------------------------------------------------------
+    {
+        model::Melody tune;
+        tune.setBarCount (model::maxBars + 50);
+        checkEqual (tune.getBarCount(), model::maxBars, "the bar count is capped");
+
+        tune.setBarCount (0);
+        checkEqual (tune.getBarCount(), 1, "and never goes below one");
+
+        // Writing past the end grows the tune rather than truncating the note.
+        model::Melody growing;
+        growing.setBarCount (2);
+        const auto barTicks = growing.getTimeSignature().barTicks();
+        growing.placeEvent (barTicks * 4, model::ticksPerQuarter, 60, false);
+
+        check (growing.getBarCount() >= 5, "writing past the end adds bars");
+    }
+
     std::cout << (failures == 0 ? "ALL PASSED" : "FAILURES") << ": "
               << (checks - failures) << "/" << checks << " checks" << std::endl;
 

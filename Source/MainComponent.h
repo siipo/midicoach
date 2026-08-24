@@ -92,6 +92,7 @@ private:
     void buildPanels();
     void togglePanel (ui::SettingsPanel& panel, juce::Component& anchor);
     void hidePanels();
+    void syncEditControls();
     void generateExercise();
     void applyClefRangeDefaults();
     void applyGradePreset();
@@ -174,7 +175,7 @@ private:
     juce::TextButton saveTuneButton   { "Save" };
     juce::TextButton newTuneButton    { "New" };
     juce::TextButton deleteTuneButton { "Delete" };
-    juce::Label clefLabel, timeSigLabel, tuneLabel, entryHintLabel;
+    juce::Label clefLabel, timeSigLabel, tuneLabel;
 
     juce::TextButton fileButton { "File..." };
 
@@ -183,6 +184,16 @@ private:
     juce::Viewport staffViewport;
     juce::Slider barsSlider { juce::Slider::IncDecButtons, juce::Slider::TextBoxLeft };
     juce::Label barsLabel;
+
+    juce::TextButton selectToolButton { "Select" };
+    juce::TextButton writeToolButton  { "Write" };
+    juce::TextButton undoButton       { "Undo" };
+    juce::TextButton redoButton       { "Redo" };
+    juce::TextButton tuneLibraryButton { "Tune..." };
+    juce::TextButton keysButton        { "Keys..." };
+
+    ui::SettingsPanel tuneLibraryPanel { "This tune" };
+    ui::SettingsPanel keysPanel        { "Keyboard shortcuts" };
     std::unique_ptr<juce::FileChooser> fileChooser;
 
     juce::TextButton generateButton { "Generate" };

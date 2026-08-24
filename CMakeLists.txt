@@ -145,6 +145,41 @@ target_link_libraries(MelodyTests PRIVATE
 )
 
 #==============================================================================
+# Tests for the staff editor - tools, selection, hotkeys, undo. Drives the real
+# key handler with real KeyPress objects, which is both more honest and far more
+# reliable than clicking around a running window.
+juce_add_console_app(EditorTests PRODUCT_NAME "EditorTests")
+juce_generate_juce_header(EditorTests)
+
+target_sources(EditorTests PRIVATE
+    Tests/EditorTests.cpp
+    Source/UI/MelodyStaffComponent.cpp
+    Source/UI/StaffLayout.cpp
+    Source/UI/MusicFont.cpp
+    Source/UI/Beaming.cpp
+    Source/Model/Melody.cpp
+    Source/Theory/MusicTheory.cpp
+)
+
+target_compile_definitions(EditorTests PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_STANDALONE_APPLICATION=1
+)
+
+target_link_libraries(EditorTests PRIVATE
+    MidiCoachData
+    juce::juce_core
+    juce::juce_data_structures
+    juce::juce_events
+    juce::juce_graphics
+    juce::juce_gui_basics
+    juce::juce_audio_basics
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_warning_flags
+)
+
+#==============================================================================
 # Tests for the rehearsal engine. It deliberately takes plain values rather than
 # the analyser's snapshot struct, so it links without any of the audio side.
 juce_add_console_app(RehearsalTests PRODUCT_NAME "RehearsalTests")

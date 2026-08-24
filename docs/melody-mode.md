@@ -110,6 +110,38 @@ line leaps; and then the beam is lifted until no stem under it is stubby.
 Secondary beams span only the runs of notes short enough to need them, and a
 lone sixteenth inside a group gets a stub pointing back towards the beat.
 
+## The editor's two tools
+
+Note entry was originally the only thing a click could do, which made the staff
+hostile in one specific way: clicking a note you meant only to look at
+overwrote it. Every notation editor separates the two, so this does too.
+
+**Select** is the resting state and **Write** is the mode you deliberately
+enter, with `N` to enter it and `Esc` to leave - MuseScore's bindings, and close
+enough to Sibelius and Dorico that anyone who has used notation software already
+knows them. The caret only appears while writing, because a caret means "the
+next thing you type lands here", which is not true when a click selects.
+
+A selection is a span of ticks rather than a list of notes, which is what lets
+it survive the layout being rebuilt underneath it. Arrows move it a note at a
+time, shifted arrows stretch it, `ctrl+A` takes the lot; up and down transpose
+it by a semitone or, with ctrl, an octave; delete turns it back into rests.
+
+**Undo came with it, and had to.** A selection that can flatten a whole phrase
+in one keystroke is a liability without one. Every mutation goes through a
+single `pushUndo`, which is the only thing to remember when adding another one.
+Loading, generating or importing a tune clears the history instead of pushing to
+it: undoing back into a piece you have left would be worse than not undoing at
+all. A transpose that is refused - because it would take a note past the end of
+the MIDI range - deliberately leaves no undo step, since an edit that changed
+nothing should not need taking back.
+
+The editor tests drive the real key handler with real `KeyPress` objects rather
+than poking at private state. That is partly rigour and partly hard experience:
+the first attempt to verify shifted arrows by automating a running window
+reported that they did not work, when in fact the automation was not delivering
+the modifier. The unit test found the truth in seconds.
+
 ## Where the controls live
 
 Most settings are chosen once and then left alone - which instrument, what

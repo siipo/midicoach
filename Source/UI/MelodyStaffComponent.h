@@ -22,6 +22,16 @@ namespace ui
     the slot to overwrite and its height picks the pitch, after which the caret
     moves on by the chosen duration.
 */
+/** What a click on the staff does.
+
+    Every notation editor separates these two, and for good reason: with only
+    an input tool, clicking a note you meant to look at overwrites it. Select is
+    the resting state and note input is the mode you deliberately enter, exactly
+    as MuseScore, Sibelius and Dorico all do it.
+*/
+enum class StaffTool { select, write };
+
+//==============================================================================
 class MelodyStaffComponent : public juce::Component
 {
 public:
@@ -63,6 +73,26 @@ public:
     void setEditEnabled (bool shouldBeEnabled);
     bool isEditEnabled() const noexcept          { return editEnabled; }
 
+    void setTool (StaffTool newTool);
+    StaffTool getTool() const noexcept           { return tool; }
+
+    /** The selected span, in ticks. Empty when nothing is selected. */
+    bool hasSelection() const noexcept           { return selectionLength > 0; }
+    void selectAll();
+    void clearSelection();
+
+    /** Undo covers every edit that changes the music - writing, erasing,
+        transposing, changing the length or the metre. Without it a selection
+        that can delete a whole phrase in one keystroke is a liability. */
+    void undo();
+    void redo();
+    bool canUndo() const noexcept                { return ! undoStack.empty(); }
+    bool canRedo() const noexcept                { return ! redoStack.empty(); }
+
+    /** Fired when the tool, the selection or the undo depth changes, so the
+        owner can keep its buttons honest. */
+    std::function<void()> onEditStateChanged;
+
     /** The duration the next click will write, dot included. */
     void setNoteValueTicks (int ticks);
     int  getNoteValueTicks() const noexcept      { return noteValueTicks; }
@@ -95,6 +125,9 @@ private:
     {
         int   startTick      = 0;
         int   lengthTicks    = 0;
+
+        int endTick() const noexcept { return startTick + lengthTicks; }
+
         int   baseTicks      = 0;
         int   dots           = 0;
         int   flags          = 0;
@@ -151,6 +184,19 @@ private:
     void rebuildLayout();
     void buildBeams();
     void keepTickVisible (int tick);
+
+    /** Remembers the current music so the next edit can be taken back. Every
+        mutation goes through this, which is why it is the only thing that has
+        to be remembered when adding one. */
+    void pushUndo();
+    void notifyEditState();
+
+    void setSelection (int startTick, int lengthTicks);
+    void moveSelection (int direction, bool extend);
+    void transposeSelection (int semitones);
+    void deleteSelection();
+    void drawSelection (juce::Graphics& g, const StaffGeometry& geometry,
+                        int systemIndex) const;
     StaffGeometry geometryForSystem (const SystemInfo& system) const;
 
     void drawSystemFurniture (juce::Graphics& g, const SystemInfo& system,
@@ -201,6 +247,13 @@ private:
     std::vector<SystemInfo>   systems;
     int  contentHeight = 0;
     bool resizingToContent = false;
+
+    StaffTool tool = StaffTool::select;
+    int selectionStart  = 0;
+    int selectionLength = 0;
+
+    std::vector<model::Melody> undoStack, redoStack;
+    static constexpr size_t maxUndoDepth = 128;
     std::vector<BeamGroup>    beams;
     std::vector<float>        measureRight;   ///< right edge x of every measure
 

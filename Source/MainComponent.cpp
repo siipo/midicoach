@@ -183,15 +183,48 @@ void MainComponent::buildPanels()
     exerciseOptionsPanel.addToggles (tiesToggle, syncopationToggle);
     exerciseOptionsPanel.addRow ({}, chromaticToggle);
 
+    tuneLibraryPanel.addRow ("Name", nameEditor);
+    tuneLibraryPanel.addRow ({}, saveTuneButton, newTuneButton);
+    tuneLibraryPanel.addGap();
+    tuneLibraryPanel.addRow ("Saved", tuneCombo);
+    tuneLibraryPanel.addRow ({}, deleteTuneButton);
+
+    keysPanel.setPreferredWidth (420);
+    keysPanel.addShortcut ("N", "write notes, or back to select");
+    keysPanel.addShortcut ("Esc", "leave note input, or clear the selection");
+    keysPanel.addShortcut ("1 - 5", "whole, half, quarter, eighth, sixteenth");
+    keysPanel.addShortcut (".", "dotted");
+    keysPanel.addShortcut ("R", "write rests instead of notes");
+    keysPanel.addShortcut ("ctrl+Z, ctrl+Y", "undo, redo");
+    keysPanel.addGap();
+    keysPanel.addText ("Selecting");
+    keysPanel.addShortcut ("click", "select a note");
+    keysPanel.addShortcut ("shift+click", "extend the selection to there");
+    keysPanel.addShortcut ("left, right", "move a note at a time");
+    keysPanel.addShortcut ("shift+left/right", "extend a note at a time");
+    keysPanel.addShortcut ("up, down", "transpose a semitone");
+    keysPanel.addShortcut ("ctrl+up/down", "transpose an octave");
+    keysPanel.addShortcut ("delete", "turn the selection into rests");
+    keysPanel.addShortcut ("ctrl+A", "select the whole tune");
+    keysPanel.addGap();
+    keysPanel.addText ("Writing");
+    keysPanel.addShortcut ("click", "write a note at that pitch");
+    keysPanel.addShortcut ("left, right", "move the caret");
+    keysPanel.addShortcut ("up, down", "nudge the last note written");
+    keysPanel.addShortcut ("backspace", "delete back from the caret");
+
     matchingPanel.addToggles (midiSourceToggle, voiceSourceToggle);
     matchingPanel.addRow ({}, anyOctaveToggle);
     matchingPanel.addRow ("Tolerance", toleranceSlider);
 
-    for (auto* panel : { &instrumentPanel, &exerciseOptionsPanel, &matchingPanel })
+    for (auto* panel : { &instrumentPanel, &exerciseOptionsPanel, &matchingPanel,
+                         &tuneLibraryPanel, &keysPanel })
     {
         addChildComponent (*panel);
         panel->setSize (panel->getPreferredWidth(), panel->getPreferredHeight());
     }
+
+    syncEditControls();
 }
 
 /** Opens a panel under the button that owns it, or closes it if it is already
@@ -218,7 +251,8 @@ void MainComponent::togglePanel (ui::SettingsPanel& panel, juce::Component& anch
 
 void MainComponent::hidePanels()
 {
-    for (auto* panel : { &instrumentPanel, &exerciseOptionsPanel, &matchingPanel })
+    for (auto* panel : { &instrumentPanel, &exerciseOptionsPanel, &matchingPanel,
+                         &tuneLibraryPanel, &keysPanel })
         panel->setVisible (false);
 }
 
@@ -239,11 +273,13 @@ void MainComponent::mouseDown (const juce::MouseEvent& event)
 
     const auto where = event.getScreenPosition();
 
-    for (auto* panel : { &instrumentPanel, &exerciseOptionsPanel, &matchingPanel })
+    for (auto* panel : { &instrumentPanel, &exerciseOptionsPanel, &matchingPanel,
+                         &tuneLibraryPanel, &keysPanel })
         if (panel->isVisible() && panel->getScreenBounds().contains (where))
             return;
 
-    for (auto* button : { &instrumentButton, &exerciseOptionsButton, &matchingButton })
+    for (auto* button : { &instrumentButton, &exerciseOptionsButton, &matchingButton,
+                          &tuneLibraryButton, &keysButton })
         if (button->isVisible() && button->getScreenBounds().contains (where))
             return;
 
@@ -341,6 +377,33 @@ void MainComponent::buildTuneControls()
     tuneCombo.setTextWhenNothingSelected ("saved tunes");
     tuneCombo.onChange = [this] { loadSelectedTune(); };
 
+    // Select and Write, the way every notation editor separates them. Select is
+    // the resting state: clicking a note you meant only to look at should not
+    // overwrite it.
+    addChildComponent (selectToolButton);
+    addChildComponent (writeToolButton);
+
+    selectToolButton.onClick = [this] { melodyStaff.setTool (ui::StaffTool::select); };
+    writeToolButton.onClick  = [this] { melodyStaff.setTool (ui::StaffTool::write); };
+
+    selectToolButton.setTooltip ("Select notes to transpose or delete    (Esc)");
+    writeToolButton.setTooltip ("Click the staff to write notes    (N)");
+
+    addChildComponent (undoButton);
+    addChildComponent (redoButton);
+    undoButton.onClick = [this] { melodyStaff.undo(); };
+    redoButton.onClick = [this] { melodyStaff.redo(); };
+    undoButton.setTooltip ("Ctrl+Z");
+    redoButton.setTooltip ("Ctrl+Y, or Ctrl+Shift+Z");
+
+    addChildComponent (tuneLibraryButton);
+    tuneLibraryButton.onClick = [this] { togglePanel (tuneLibraryPanel, tuneLibraryButton); };
+
+    addChildComponent (keysButton);
+    keysButton.onClick = [this] { togglePanel (keysPanel, keysButton); };
+
+    melodyStaff.onEditStateChanged = [this] { syncEditControls(); };
+
     addTuneLabel (barsLabel, "Bars");
     addChildComponent (barsSlider);
     barsSlider.setRange (1.0, (double) model::maxBars, 1.0);
@@ -359,8 +422,6 @@ void MainComponent::buildTuneControls()
         refreshRehearsalNotes();
     };
 
-    addTuneLabel (entryHintLabel,
-                  "click the staff to write   1-5 value   . dot   R rest   arrows move/nudge");
 
     refreshTuneList();
     syncTuneControls();
@@ -502,42 +563,56 @@ void MainComponent::exportPdf()
 
 void MainComponent::layoutTuneControls (juce::Rectangle<int> row)
 {
+    selectToolButton.setBounds (row.removeFromLeft (60));
+    writeToolButton.setBounds (row.removeFromLeft (56));
+
+    row.removeFromLeft (10);
+
     for (auto* button : valueButtons)
     {
         button->setBounds (row.removeFromLeft (34).reduced (1));
         row.removeFromLeft (2);
     }
 
-    row.removeFromLeft (8);
-    dotToggle.setBounds (row.removeFromLeft (56));
-    restToggle.setBounds (row.removeFromLeft (62));
-
-    row.removeFromLeft (10);
-    clefLabel.setBounds (row.removeFromLeft (32));
-    clefCombo.setBounds (row.removeFromLeft (80));
     row.removeFromLeft (6);
-    timeSigLabel.setBounds (row.removeFromLeft (32));
-    timeSigCombo.setBounds (row.removeFromLeft (64));
-
-    row.removeFromLeft (6);
-    barsLabel.setBounds (row.removeFromLeft (30));
-    barsSlider.setBounds (row.removeFromLeft (86));
-
-    row.removeFromLeft (10);
-    nameEditor.setBounds (row.removeFromLeft (112));
-    row.removeFromLeft (4);
-    saveTuneButton.setBounds (row.removeFromLeft (50));
-    row.removeFromLeft (4);
-    newTuneButton.setBounds (row.removeFromLeft (46));
+    dotToggle.setBounds (row.removeFromLeft (54));
+    restToggle.setBounds (row.removeFromLeft (58));
 
     row.removeFromLeft (8);
-    tuneLabel.setBounds (row.removeFromLeft (36));
-    tuneCombo.setBounds (row.removeFromLeft (124));
+    clefLabel.setBounds (row.removeFromLeft (30));
+    clefCombo.setBounds (row.removeFromLeft (74));
     row.removeFromLeft (4);
-    deleteTuneButton.setBounds (row.removeFromLeft (56));
+    timeSigLabel.setBounds (row.removeFromLeft (30));
+    timeSigCombo.setBounds (row.removeFromLeft (62));
+    row.removeFromLeft (4);
+    barsLabel.setBounds (row.removeFromLeft (28));
+    barsSlider.setBounds (row.removeFromLeft (84));
 
-    row.removeFromLeft (6);
+    row.removeFromLeft (10);
+    undoButton.setBounds (row.removeFromLeft (54));
+    row.removeFromLeft (3);
+    redoButton.setBounds (row.removeFromLeft (54));
+
+    row.removeFromLeft (10);
+    tuneLibraryButton.setBounds (row.removeFromLeft (64));
+    row.removeFromLeft (4);
     fileButton.setBounds (row.removeFromLeft (60));
+    row.removeFromLeft (4);
+    keysButton.setBounds (row.removeFromLeft (60));
+}
+
+/** Keeps the tool buttons and the undo pair honest about what the staff will
+    actually do if they are pressed. */
+void MainComponent::syncEditControls()
+{
+    const auto writing = melodyStaff.getTool() == ui::StaffTool::write;
+
+    selectToolButton.setToggleState (! writing, juce::dontSendNotification);
+    writeToolButton.setToggleState (writing, juce::dontSendNotification);
+
+    undoButton.setEnabled (melodyStaff.canUndo());
+    redoButton.setEnabled (melodyStaff.canRedo());
+
 }
 
 void MainComponent::syncTuneControls()
@@ -1436,7 +1511,9 @@ void MainComponent::updateMode()
     {
         &dotToggle, &restToggle, &clefCombo, &timeSigCombo, &tuneCombo, &nameEditor,
         &saveTuneButton, &newTuneButton, &deleteTuneButton,
-        &clefLabel, &timeSigLabel, &tuneLabel, &fileButton, &barsLabel, &barsSlider,
+        &clefLabel, &timeSigLabel, &fileButton, &barsLabel, &barsSlider,
+        &selectToolButton, &writeToolButton, &undoButton, &redoButton,
+        &tuneLibraryButton, &keysButton,
         &rehearseButton, &playTuneButton, &cueNoteButton, &progressLabel,
         &modeCombo, &tempoLabel, &tempoSlider, &clickToggle, &matchingButton,
         &generateButton, &gradeCombo, &intervalCombo, &rhythmCombo, &keyLevelCombo,
