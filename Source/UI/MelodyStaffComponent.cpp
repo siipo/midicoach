@@ -14,6 +14,11 @@ namespace
         the rest is room for ledger lines, stems and flags. */
     constexpr float systemHeightSpaces = 12.0f;
 
+    /** How big one staff space is on screen. Fixed rather than fitted, because
+        a readable staff matters more than seeing the whole tune at once - past
+        a few systems, fitting means shrinking to illegibility. */
+    constexpr float screenStaffSpace = 13.0f;
+
     /** Classic proportional spacing: width grows with duration, but far more
         slowly than duration does, so a whole note is wider than a quarter
         without being sixteen times wider. */
@@ -66,6 +71,14 @@ void MelodyStaffComponent::setScale (const theory::Scale& newScale)
 
 void MelodyStaffComponent::setTargetIndex (int rehearsalIndex)
 {
+    if (rehearsalIndex >= 0 && rehearsalIndex != targetIndex)
+        for (const auto& event : laidOut)
+            if (event.colourIndex == rehearsalIndex)
+            {
+                keepTickVisible (event.startTick);
+                break;
+            }
+
     if (targetIndex != rehearsalIndex)
     {
         targetIndex = rehearsalIndex;
@@ -100,6 +113,9 @@ juce::Colour MelodyStaffComponent::lineColour() const
 
 void MelodyStaffComponent::setPlayheadTick (int tick)
 {
+    if (tick >= 0 && tick != playheadTick)
+        keepTickVisible (tick);
+
     if (playheadTick != tick)
     {
         playheadTick = tick;
@@ -241,10 +257,14 @@ void MelodyStaffComponent::rebuildLayout()
     // passes settles it.
     // On screen the staff is capped so a short tune doesn't look absurd in a
     // tall panel. On paper the opposite is wanted: fill the sheet.
-    const auto maxStaffSpace = printMode ? 48.0f : 15.0f;
-
-    staffSpace = juce::jlimit (5.0f, maxStaffSpace,
-                               bounds.getHeight() / (2.0f * systemHeightSpaces));
+    // On paper the staff fills the sheet: it is sized from the page height and
+    // shrunk until every system fits. On screen it must not be, because a tune
+    // long enough to need twenty systems would end up unreadable - so the size
+    // is fixed at something comfortable and the component grows instead, and
+    // whatever holds it scrolls.
+    staffSpace = printMode ? juce::jlimit (5.0f, 48.0f,
+                                           bounds.getHeight() / (2.0f * systemHeightSpaces))
+                           : screenStaffSpace;
 
     std::vector<float> measureWidths;
 
@@ -308,6 +328,11 @@ void MelodyStaffComponent::rebuildLayout()
         }
 
         systems.push_back (current);
+
+        // Only a page has to be fitted into. On screen the height follows the
+        // music rather than the music being squeezed into the height.
+        if (! printMode)
+            break;
 
         const auto requiredHeight = (float) systems.size() * systemHeightSpaces * staffSpace;
 
@@ -386,6 +411,41 @@ void MelodyStaffComponent::rebuildLayout()
     }
 
     buildBeams();
+
+    contentHeight = (int) std::ceil ((float) systems.size() * systemHeight
+                                       + (bounds.getY() - getLocalBounds().toFloat().getY()) * 2.0f);
+
+    // Grow to whatever the music needs. The guard matters: setSize re-enters
+    // through resized(), and without it a tune whose height keeps changing
+    // would recurse rather than settle.
+    if (! printMode && ! resizingToContent && contentHeight > 0 && contentHeight != getHeight())
+    {
+        const juce::ScopedValueSetter<bool> guard (resizingToContent, true);
+        setSize (getWidth(), contentHeight);
+    }
+}
+
+/** Asks whoever owns the scrolling to bring the system holding this tick into
+    view. Silent when the tick is not on any system, which is the normal case
+    while a tune is being rebuilt. */
+void MelodyStaffComponent::keepTickVisible (int tick)
+{
+    if (onKeepVisible == nullptr || printMode || systems.empty())
+        return;
+
+    float x = 0.0f;
+    int systemIndex = 0;
+
+    if (! positionForTick (tick, x, systemIndex))
+        return;
+
+    if (systemIndex < 0 || systemIndex >= (int) systems.size())
+        return;
+
+    const auto systemHeight = systemHeightSpaces * staffSpace;
+    const auto top = systems[(size_t) systemIndex].bottomLineY - systemHeight * 0.62f;
+
+    onKeepVisible (juce::Rectangle<int> (0, (int) top, getWidth(), (int) std::ceil (systemHeight)));
 }
 
 /** Works out which notes share a beam, and where that beam sits.
@@ -894,6 +954,7 @@ void MelodyStaffComponent::setCaretTick (int tick)
     // The caret may sit one slot past the end; writing there is what grows the
     // tune by a bar.
     caretTick = juce::jlimit (0, melody.getTotalTicks(), tick);
+    keepTickVisible (caretTick);
 }
 
 void MelodyStaffComponent::moveCaret (int direction)

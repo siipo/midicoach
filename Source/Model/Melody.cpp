@@ -98,7 +98,7 @@ void Melody::setTimeSignature (TimeSignature newTimeSignature)
 
 void Melody::setBarCount (int newBarCount)
 {
-    barCount = juce::jlimit (1, 128, newBarCount);
+    barCount = juce::jlimit (1, maxBars, newBarCount);
     normalise();
 }
 
@@ -140,7 +140,7 @@ void Melody::placeEvent (int startTick, int lengthTicks, int midiNote, bool isRe
     const auto barsNeeded = (startTick + lengthTicks + barLength - 1) / barLength;
 
     if (barsNeeded > barCount)
-        barCount = juce::jlimit (1, 128, barsNeeded);
+        barCount = juce::jlimit (1, maxBars, barsNeeded);
 
     const auto endTick = startTick + lengthTicks;
 
@@ -485,7 +485,7 @@ Melody Melody::fromVar (const juce::var& source)
         signature.denominator = juce::jmax (1, (int) object->getProperty ("denominator"));
         melody.timeSignature  = signature;
 
-        melody.barCount = juce::jlimit (1, 128, (int) object->getProperty ("bars"));
+        melody.barCount = juce::jlimit (1, maxBars, (int) object->getProperty ("bars"));
 
         // The default constructor already filled the melody with rests for its
         // own time signature - drop those before loading, or they survive

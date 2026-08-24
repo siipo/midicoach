@@ -46,6 +46,19 @@ public:
         a page rather than shown on screen. */
     void setPrintMode (bool shouldPrint);
 
+    /** How tall the music actually needs to be, in pixels.
+
+        On screen the staff is a fixed readable size and the component grows to
+        whatever the music needs, so that a long tune scrolls inside a viewport
+        rather than being squeezed until it cannot be read. On paper it is the
+        other way round and this is simply the page height.
+    */
+    int getContentHeight() const noexcept { return contentHeight; }
+
+    /** Asks the owner to scroll so this rectangle is on screen. Fired when the
+        caret or the playhead moves somewhere that may be out of view. */
+    std::function<void (juce::Rectangle<int> area)> onKeepVisible;
+
     //==============================================================================
     void setEditEnabled (bool shouldBeEnabled);
     bool isEditEnabled() const noexcept          { return editEnabled; }
@@ -137,6 +150,7 @@ private:
 
     void rebuildLayout();
     void buildBeams();
+    void keepTickVisible (int tick);
     StaffGeometry geometryForSystem (const SystemInfo& system) const;
 
     void drawSystemFurniture (juce::Graphics& g, const SystemInfo& system,
@@ -185,6 +199,8 @@ private:
     float staffSpace = 12.0f;
     std::vector<LaidOutEvent> laidOut;
     std::vector<SystemInfo>   systems;
+    int  contentHeight = 0;
+    bool resizingToContent = false;
     std::vector<BeamGroup>    beams;
     std::vector<float>        measureRight;   ///< right edge x of every measure
 

@@ -177,6 +177,12 @@ private:
     juce::Label clefLabel, timeSigLabel, tuneLabel, entryHintLabel;
 
     juce::TextButton fileButton { "File..." };
+
+    /** The staff sizes itself to the music and this scrolls it, which is what
+        makes a tune longer than a few systems usable at a readable size. */
+    juce::Viewport staffViewport;
+    juce::Slider barsSlider { juce::Slider::IncDecButtons, juce::Slider::TextBoxLeft };
+    juce::Label barsLabel;
     std::unique_ptr<juce::FileChooser> fileChooser;
 
     juce::TextButton generateButton { "Generate" };

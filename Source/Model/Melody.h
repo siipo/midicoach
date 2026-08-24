@@ -10,6 +10,11 @@ namespace model
     we offer - including dotted ones - lands on a whole number of ticks. */
 constexpr int ticksPerQuarter = 960;
 
+/** The longest tune the editor will write. Not a technical limit - the model
+    would take far more - but a number past which a single unbroken line stops
+    being a practice exercise and starts being a piece. */
+constexpr int maxBars = 256;
+
 //==============================================================================
 /** A writable note value: an undotted length plus zero or one dot.
 

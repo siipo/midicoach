@@ -15,7 +15,23 @@ MainComponent::MainComponent()
     buildControls();
 
     addAndMakeVisible (notation);
-    addChildComponent (melodyStaff);
+    // The staff goes inside the viewport rather than straight into the window,
+    // so a tune too long to fit scrolls instead of shrinking.
+    addChildComponent (staffViewport);
+    staffViewport.setViewedComponent (&melodyStaff, false);
+    staffViewport.setScrollBarsShown (true, false);
+    staffViewport.setScrollBarThickness (10);
+
+    melodyStaff.onKeepVisible = [this] (juce::Rectangle<int> area)
+    {
+        const auto view = staffViewport.getViewArea();
+
+        if (area.getY() < view.getY())
+            staffViewport.setViewPosition (0, juce::jmax (0, area.getY() - 8));
+        else if (area.getBottom() > view.getBottom())
+            staffViewport.setViewPosition (0, juce::jmax (0, area.getBottom() - view.getHeight() + 8));
+    };
+
     addAndMakeVisible (keyboard);
 
     buildDemoMelody();
@@ -325,8 +341,26 @@ void MainComponent::buildTuneControls()
     tuneCombo.setTextWhenNothingSelected ("saved tunes");
     tuneCombo.onChange = [this] { loadSelectedTune(); };
 
+    addTuneLabel (barsLabel, "Bars");
+    addChildComponent (barsSlider);
+    barsSlider.setRange (1.0, (double) model::maxBars, 1.0);
+    barsSlider.setValue (4.0, juce::dontSendNotification);
+    barsSlider.setTooltip ("How many bars long the tune is. Shortening it throws "
+                           "away anything written past the new end.");
+    barsSlider.onValueChange = [this]
+    {
+        auto tune = melodyStaff.getMelody();
+
+        if (tune.getBarCount() == (int) barsSlider.getValue())
+            return;
+
+        tune.setBarCount ((int) barsSlider.getValue());
+        melodyStaff.setMelody (tune);
+        refreshRehearsalNotes();
+    };
+
     addTuneLabel (entryHintLabel,
-                  "click the staff to write   1-5 value   . dot   R rest   arrows move/nudge   backspace delete");
+                  "click the staff to write   1-5 value   . dot   R rest   arrows move/nudge");
 
     refreshTuneList();
     syncTuneControls();
@@ -482,27 +516,28 @@ void MainComponent::layoutTuneControls (juce::Rectangle<int> row)
     clefLabel.setBounds (row.removeFromLeft (32));
     clefCombo.setBounds (row.removeFromLeft (80));
     row.removeFromLeft (6);
-    timeSigLabel.setBounds (row.removeFromLeft (34));
-    timeSigCombo.setBounds (row.removeFromLeft (70));
+    timeSigLabel.setBounds (row.removeFromLeft (32));
+    timeSigCombo.setBounds (row.removeFromLeft (64));
 
-    row.removeFromLeft (12);
-    nameEditor.setBounds (row.removeFromLeft (130));
-    row.removeFromLeft (4);
-    saveTuneButton.setBounds (row.removeFromLeft (56));
-    row.removeFromLeft (4);
-    newTuneButton.setBounds (row.removeFromLeft (52));
+    row.removeFromLeft (6);
+    barsLabel.setBounds (row.removeFromLeft (30));
+    barsSlider.setBounds (row.removeFromLeft (86));
 
     row.removeFromLeft (10);
-    tuneLabel.setBounds (row.removeFromLeft (38));
-    tuneCombo.setBounds (row.removeFromLeft (150));
+    nameEditor.setBounds (row.removeFromLeft (112));
     row.removeFromLeft (4);
-    deleteTuneButton.setBounds (row.removeFromLeft (62));
+    saveTuneButton.setBounds (row.removeFromLeft (50));
+    row.removeFromLeft (4);
+    newTuneButton.setBounds (row.removeFromLeft (46));
 
     row.removeFromLeft (8);
-    fileButton.setBounds (row.removeFromLeft (68));
+    tuneLabel.setBounds (row.removeFromLeft (36));
+    tuneCombo.setBounds (row.removeFromLeft (124));
+    row.removeFromLeft (4);
+    deleteTuneButton.setBounds (row.removeFromLeft (56));
 
-    row.removeFromLeft (10);
-    entryHintLabel.setBounds (row);
+    row.removeFromLeft (6);
+    fileButton.setBounds (row.removeFromLeft (60));
 }
 
 void MainComponent::syncTuneControls()
@@ -529,6 +564,10 @@ void MainComponent::syncTuneControls()
             signatureId = (int) i + 1;
 
     timeSigCombo.setSelectedId (signatureId, juce::dontSendNotification);
+
+    // Writing past the last bar grows the tune, so this has to follow the music
+    // rather than only drive it.
+    barsSlider.setValue (tune.getBarCount(), juce::dontSendNotification);
 }
 
 void MainComponent::applyTuneSettings()
@@ -1374,7 +1413,7 @@ void MainComponent::updateScale()
 void MainComponent::updateMode()
 {
     notation.setVisible (! tuneMode);
-    melodyStaff.setVisible (tuneMode);
+    staffViewport.setVisible (tuneMode);
     melodyStaff.setEditEnabled (tuneMode);
 
     if (! tuneMode)
@@ -1397,7 +1436,7 @@ void MainComponent::updateMode()
     {
         &dotToggle, &restToggle, &clefCombo, &timeSigCombo, &tuneCombo, &nameEditor,
         &saveTuneButton, &newTuneButton, &deleteTuneButton,
-        &clefLabel, &timeSigLabel, &tuneLabel, &entryHintLabel, &fileButton,
+        &clefLabel, &timeSigLabel, &tuneLabel, &fileButton, &barsLabel, &barsSlider,
         &rehearseButton, &playTuneButton, &cueNoteButton, &progressLabel,
         &modeCombo, &tempoLabel, &tempoSlider, &clickToggle, &matchingButton,
         &generateButton, &gradeCombo, &intervalCombo, &rhythmCombo, &keyLevelCombo,
@@ -1880,5 +1919,11 @@ void MainComponent::resized()
 
     area.removeFromBottom (10);
     notation.setBounds (area);
-    melodyStaff.setBounds (area);
+    staffViewport.setBounds (area);
+
+    // The staff decides its own height from the music; only the width is ours
+    // to give. The minimum keeps a short tune filling the panel rather than
+    // floating in the top of it.
+    melodyStaff.setSize (staffViewport.getMaximumVisibleWidth(),
+                         juce::jmax (area.getHeight(), melodyStaff.getContentHeight()));
 }
