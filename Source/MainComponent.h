@@ -217,7 +217,10 @@ private:
 
     juce::TextButton liveModeButton  { "Live" };
     juce::TextButton tuneModeButton  { "Tunes" };
-    bool tuneMode = false;
+    // Tunes is where the app opens. Reading and rehearsing is what it is for;
+    // the live staff is the tuner and warm-up view you step across to, not the
+    // thing you came for.
+    bool tuneMode = true;
 
     juce::ToggleButton chordToggle          { "Chord detection" };
     juce::ToggleButton scaleHighlightToggle { "Shade scale on keys" };

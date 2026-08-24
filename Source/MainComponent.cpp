@@ -122,7 +122,7 @@ void MainComponent::buildControls()
     };
 
     addAndMakeVisible (chordToggle);
-    chordToggle.setToggleState (true, juce::dontSendNotification);
+    chordToggle.setToggleState (false, juce::dontSendNotification);
     chordToggle.onClick = [this]
     {
         analyser.setChordDetectionEnabled (chordToggle.getToggleState());
@@ -968,7 +968,11 @@ void MainComponent::buildRehearsalControls()
     };
 
     addChildComponent (prepareToggle);
-    prepareToggle.setToggleState (true, juce::dontSendNotification);
+
+    // Off by default. Half a minute of enforced staring is right when you are
+    // practising for an exam and wrong the first twenty times you press
+    // Rehearse to see what it does.
+    prepareToggle.setToggleState (false, juce::dontSendNotification);
     prepareToggle.setTooltip ("Half a minute to read it through before it starts, "
                               "the way an exam gives you");
 

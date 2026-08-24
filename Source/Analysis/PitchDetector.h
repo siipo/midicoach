@@ -52,7 +52,11 @@ private:
     float  magnitudeAt (double frequency) const;
 
     double currentSampleRate = 44100.0;
-    bool   chordEnabled = true;
+    // Off unless asked for. Everything this app is actually for - reading a
+    // line, singing it back, checking one note against one target - is
+    // monophonic, and the chord layer is a heuristic that can report two notes
+    // where a rich single note was played. The honest reading is the default.
+    bool   chordEnabled = false;
     float  levelGateDb = -45.0f;
 
     juce::dsp::FFT fft { fftOrder };
