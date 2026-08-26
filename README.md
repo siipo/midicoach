@@ -45,6 +45,28 @@ hosting.
   melodic form, and length from four bars to sixteen. Everything is fitted to a
   range that follows the clef - treble C4-A5, bass E2-C4 - so nothing needs more
   than one ledger line.
+- **See what you actually played** — while you play or sing, the note really
+  coming out is drawn beside the written one at its true pitch, **named**, with
+  a line between the two when they differ. Rehearsal only ever moves on a *correct*
+  note, so without this a wrong note leaves no trace and being consistently a
+  third flat looks the same as not singing at all. A sung note is nudged off
+  the line by however many cents it missed by, so intonation is visible too. It
+  works before and outside rehearsal, so it is there while you are just reading
+  through. Because the note is named on the staff, Tunes has no separate readout
+  strip taking a hundred pixels to say the same thing further from where you are
+  looking; the Live tuner keeps its full readout, which is what that page is for.
+- **A marked-up run afterwards** — when a run finishes, or you stop one part
+  way, the score is marked with what happened: missed notes in red with a
+  cross, notes you hunted for in amber with the number of tries, and a small
+  arrow for notes that came in early or late. Only trouble is marked - a page
+  where everything is coloured tells you nothing. Pitch trouble colours the
+  notehead and timing trouble gets the arrow, so reading problems and rhythm
+  problems stay apart.
+- **Loop** — the run stops on its own once the last note has been answered, and
+  with **Loop** on it starts again from the top after a short pause. Reading the
+  same four bars round and round is how a phrase stops being decoded and starts
+  being read, and stopping to press a button each time breaks the flow that is
+  being built.
 - **Practised the way it is taught** — **Hear key** plays a cadence in the key
   and then your first note; **Look first** gives the exam's half a minute to
   read it through, with the checklist on screen; **Rhythm only** accepts any

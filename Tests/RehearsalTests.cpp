@@ -327,6 +327,90 @@ int main()
         checkEqual (misses, 1, "and a beat nobody played is still missed");
     }
 
+    // -- a finished run is over ------------------------------------------------
+    //
+    // The engine used to fire onComplete and then carry on running, so it went
+    // on waiting for notes that had all been answered - and everything driven
+    // off isRunning (the transport, the click, the Stop button) carried on too.
+    {
+        practice::RehearsalEngine engine;
+
+        auto completions = 0;
+        engine.onComplete = [&completions] { ++completions; };
+
+        engine.setNotes ({ 60, 62 });
+        engine.start();
+        check (engine.isRunning(), "a started run is running");
+
+        engine.handleMidiNote (60, 0.0);
+        check (engine.isRunning(), "and stays running part way through");
+        checkEqual (completions, 0, "with nothing finished yet");
+
+        engine.handleMidiNote (62, 500.0);
+
+        checkEqual (completions, 1, "the last note finishes the run");
+        check (! engine.isRunning(), "which stops it");
+        checkEqual (engine.getTargetIndex(), -1, "and leaves no note waiting");
+
+        // Both outcomes have to survive being stopped: the run is over, but
+        // what happened during it is exactly what gets looked at afterwards.
+        checkEqual ((int) engine.getOutcomes().size(), 2, "the outcomes are still there");
+
+        // Notes arriving after the end must not restart it or fire again.
+        engine.handleMidiNote (64, 900.0);
+        checkEqual (completions, 1, "playing on afterwards does not finish it twice");
+        check (! engine.isRunning(), "nor start it going again");
+    }
+
+    // -- and the same in time ---------------------------------------------------
+    {
+        practice::RehearsalEngine engine;
+
+        auto completions = 0;
+        engine.onComplete = [&completions] { ++completions; };
+
+        engine.setMode (practice::RehearsalMode::inTime);
+        engine.setTimedNotes ({ 60, 62 }, { 1000.0, 2000.0 });
+        engine.start();
+
+        engine.handleMidiNote (60, 1000.0);
+        engine.advanceTransport (1500.0);
+        check (engine.isRunning(), "still going with a note outstanding");
+
+        // Letting the clock run past the last note retires it, missed or not.
+        engine.advanceTransport (4000.0);
+
+        checkEqual (completions, 1, "running out of tune finishes the run");
+        check (! engine.isRunning(), "and stops it");
+    }
+
+    // -- starting again is a clean slate ---------------------------------------
+    // What a loop does: the same notes, from the top, as though nothing had
+    // happened.
+    {
+        practice::RehearsalEngine engine;
+
+        auto completions = 0;
+        engine.onComplete = [&completions] { ++completions; };
+
+        engine.setNotes ({ 60, 62 });
+        engine.start();
+        engine.handleMidiNote (60, 0.0);
+        engine.handleMidiNote (62, 100.0);
+        checkEqual (completions, 1, "round one finished");
+
+        engine.setNotes ({ 60, 62 });
+        engine.start();
+
+        check (engine.isRunning(), "and it can be started again");
+        checkEqual (engine.getTargetIndex(), 0, "back at the first note");
+        checkEqual (engine.getTotalWrongNotes(), 0, "with the wrong-note count reset");
+
+        engine.handleMidiNote (60, 200.0);
+        engine.handleMidiNote (62, 300.0);
+        checkEqual (completions, 2, "and finishes on its own a second time");
+    }
+
     std::cout << (failures == 0 ? "ALL PASSED" : "FAILURES") << ": "
               << (checks - failures) << "/" << checks << " checks" << std::endl;
 

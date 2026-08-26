@@ -10,6 +10,41 @@
 namespace ui
 {
 
+//==============================================================================
+/** What happened to one rehearsal note.
+
+    Deliberately plain values rather than the rehearsal engine's own struct, so
+    the staff can be drawn and tested without knowing that practice:: exists -
+    the same separation RehearsalEngine keeps from the audio side.
+*/
+struct NoteReview
+{
+    int    rehearsalIndex = 0;
+    bool   reached        = false;   ///< false if the run stopped before this note
+    bool   hit            = false;
+    int    wrongNotes     = 0;       ///< how many other notes were tried first
+    double timingErrorMs  = 0.0;     ///< positive is late
+    double centsError     = 0.0;
+    bool   timingKnown    = false;   ///< false in step mode, where timing is not judged
+};
+
+//==============================================================================
+/** The note arriving right now from the keyboard or the microphone.
+
+    Drawn beside whatever the reader is looking at, right or wrong. Rehearsal
+    only ever moves on a correct note, so without this a wrong note is simply
+    invisible: you can be a third flat all the way through and see nothing but
+    a cursor that will not advance.
+*/
+struct LiveNote
+{
+    bool   active    = false;
+    int    midiNote  = 60;
+    double cents     = 0.0;     ///< how far off the nearest semitone, voice only
+    bool   fromVoice = false;   ///< false when it came from MIDI, which is exact
+};
+
+
 /** Engraves a melody on a single staff, and lets you write one by clicking.
 
     A melody is monophonic, so one staff with a chosen clef is both the
@@ -48,6 +83,25 @@ public:
 
     /** Rehearsal notes already completed, drawn in a settled colour. */
     void setCompletedCount (int count);
+
+    /** Marks up the score with how the last run went.
+
+        Only trouble is marked. Colouring every note would make the page
+        uniform, and the whole value of this is that the eye lands straight on
+        the two bars that went wrong.
+
+        @param lateThresholdMs  beyond this a note is marked early or late. Comes
+                                from the rehearsal engine's own timing window, so
+                                the marks agree with the score it reports.
+    */
+    void setReview (std::vector<NoteReview> newReview, double lateThresholdMs);
+    void clearReview();
+    bool hasReview() const noexcept { return ! review.empty(); }
+
+    /** Shows what is actually being played or sung, beside the written note. */
+    void setLiveNote (LiveNote note);
+    void setShowLiveNote (bool shouldShow);
+    bool isShowingLiveNote() const noexcept { return showLiveNote; }
 
     /** Where the transport has reached, in ticks, or -1 to hide the playhead. */
     void setPlayheadTick (int tick);
@@ -212,6 +266,19 @@ private:
     void drawPlayhead (juce::Graphics& g) const;
     bool positionForTick (int tick, float& x, int& systemIndex) const;
     void drawShadowNote (juce::Graphics& g, const juce::Font& font) const;
+    void drawReviewMarks (juce::Graphics& g, const StaffGeometry& geometry,
+                          int systemIndex) const;
+    void drawLiveNote (juce::Graphics& g, const juce::Font& font) const;
+
+    /** The written note the live display should sit beside: whatever the reader
+        is looking at now - the rehearsal target, else the playhead, else the
+        caret, else the start of the tune. */
+    const LaidOutEvent* anchorEvent() const;
+    const NoteReview*   reviewFor (const LaidOutEvent& event) const;
+
+    /** Height of one system's slice, in staff spaces. Grows to make room for
+        the review lane when there is something to put in it. */
+    float systemSliceSpaces() const noexcept;
 
     HitPosition hitTest (juce::Point<float> position) const;
     const LaidOutEvent* eventForTick (int tick) const;
@@ -231,6 +298,12 @@ private:
 
     int targetIndex    = -1;
     int completedCount = 0;
+
+    std::vector<NoteReview> review;
+    double reviewLateMs = 90.0;
+
+    LiveNote liveNote;
+    bool     showLiveNote = false;
 
     bool editEnabled   = false;
     bool printMode     = false;

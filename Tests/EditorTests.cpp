@@ -287,7 +287,139 @@ int main()
         check (staff.isRestMode(), "R switches to writing rests");
     }
 
-    std::cout << (failures == 0 ? "ALL PASSED" : "FAILURES") << ": "
+    // -- the run review --------------------------------------------------------
+    //
+    // The marks are joined to the music by rehearsal index, and the join is the
+    // part that can silently go wrong: an index that no longer matches anything
+    // draws nothing, which looks exactly like a clean run.
+    {
+        ui::MelodyStaffComponent staff;
+        makeStaff (staff);
+
+        check (! staff.hasReview(), "a tune starts with no marks on it");
+
+        std::vector<ui::NoteReview> review;
+
+        for (int i = 0; i < 4; ++i)
+        {
+            ui::NoteReview entry;
+            entry.rehearsalIndex = i;
+            entry.reached        = true;
+            entry.hit            = i != 2;          // the third note was missed
+            entry.wrongNotes     = i == 1 ? 3 : 0;  // the second took three tries
+            entry.timingErrorMs  = i == 3 ? 200.0 : 5.0;
+            entry.timingKnown    = true;
+            review.push_back (entry);
+        }
+
+        staff.setReview (review, 90.0);
+        check (staff.hasReview(), "a review can be shown");
+
+        // The lane is taken out of the layout, so the music needs more room
+        // than it did - if it does not, the marks are being drawn over the
+        // notes above them.
+        ui::MelodyStaffComponent plain;
+        makeStaff (plain);
+
+        check (staff.getContentHeight() > plain.getContentHeight(),
+               "showing a review makes room above the staff");
+
+        staff.clearReview();
+        check (! staff.hasReview(), "and it can be cleared");
+        checkEqual (staff.getContentHeight(), plain.getContentHeight(),
+                    "which gives the room back");
+    }
+
+    // -- a review is only true of the music it was made from ---------------------
+    {
+        ui::MelodyStaffComponent staff;
+        makeStaff (staff);
+
+        std::vector<ui::NoteReview> review;
+        ui::NoteReview entry;
+        entry.rehearsalIndex = 0;
+        entry.reached = true;
+        review.push_back (entry);
+
+        staff.setReview (review, 90.0);
+        check (staff.hasReview(), "there is a review to invalidate");
+
+        // Editing moves the notes the marks point at, so the marks have to go.
+        staff.keyPressed (press ((int) 'A', command));
+        staff.keyPressed (press (juce::KeyPress::upKey));
+        check (! staff.hasReview(), "editing the tune clears the review");
+
+        staff.setReview (review, 90.0);
+        staff.setMelody (makeTune());
+        check (! staff.hasReview(), "and so does loading a different tune");
+    }
+
+    // -- an index pointing at nothing must not take the staff down ---------------
+    {
+        ui::MelodyStaffComponent staff;
+        makeStaff (staff);
+
+        std::vector<ui::NoteReview> review;
+
+        for (int i : { -5, 0, 99 })
+        {
+            ui::NoteReview entry;
+            entry.rehearsalIndex = i;
+            entry.reached = true;
+            entry.hit = false;
+            review.push_back (entry);
+        }
+
+        staff.setReview (review, 90.0);
+        check (staff.hasReview(), "out of range marks are held without complaint");
+
+        // Drawing is where a bad index would bite, so actually draw it.
+        juce::Image image (juce::Image::ARGB, 900, staff.getContentHeight(), true);
+        juce::Graphics g (image);
+        staff.paintEntireComponent (g, false);
+
+        check (true, "and painting one does not fall over");
+    }
+
+    // -- the live note ----------------------------------------------------------
+    {
+        ui::MelodyStaffComponent staff;
+        makeStaff (staff);
+
+        check (! staff.isShowingLiveNote(), "the live display is off unless asked for");
+
+        staff.setShowLiveNote (true);
+        check (staff.isShowingLiveNote(), "and can be switched on");
+
+        // A wildly wrong note, well off the staff, is exactly the case that has
+        // to draw: that is the one worth seeing.
+        ui::LiveNote note;
+        note.active    = true;
+        note.midiNote  = 96;
+        note.cents     = -40.0;
+        note.fromVoice = true;
+        staff.setLiveNote (note);
+
+        juce::Image image (juce::Image::ARGB, 900, staff.getContentHeight(), true);
+        juce::Graphics g (image);
+        staff.paintEntireComponent (g, false);
+
+        check (true, "a note far outside the staff draws without falling over");
+
+        // And with no music at all there is nothing to sit beside.
+        ui::MelodyStaffComponent empty;
+        empty.setSize (900, 260);
+        empty.setShowLiveNote (true);
+        empty.setLiveNote (note);
+
+        juce::Image blank (juce::Image::ARGB, 900, 260, true);
+        juce::Graphics blankGraphics (blank);
+        empty.paintEntireComponent (blankGraphics, false);
+
+        check (true, "and an empty staff has nothing to draw beside, safely");
+    }
+
+            std::cout << (failures == 0 ? "ALL PASSED" : "FAILURES") << ": "
               << (checks - failures) << "/" << checks << " checks" << std::endl;
 
     return failures == 0 ? 0 : 1;

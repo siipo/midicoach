@@ -142,6 +142,99 @@ the first attempt to verify shifted arrows by automating a running window
 reported that they did not work, when in fact the automation was not delivering
 the modifier. The unit test found the truth in seconds.
 
+## Seeing yourself: the live note and the run review
+
+Two separate displays, both driven by data the app already had and was throwing
+away.
+
+**The live note** (`MelodyStaffComponent::drawLiveNote`) draws whatever is
+arriving from the keyboard or the microphone beside the note being read. It is
+deliberately independent of rehearsal: it works before a run starts, which is
+when someone is finding their way into the tune. Rehearsal advances only on a
+correct note, so a wrong note was previously invisible - the cursor simply did
+not move, which looks identical whether you sang a wrong note or nothing at
+all.
+
+The note is drawn at its real pitch, on an opaque plate with an edge so it
+cannot be mistaken for engraved music, and a line joins the written note to it
+whenever the two differ. That line is the readout: no line means you are on the
+note. A sung note is additionally nudged off the line by however many cents it
+missed by, capped at a semitone, so flat-but-recognisable and flat-enough-to-be
+-a-different-note look different.
+
+The note is named on the plate - `C5`, and for the microphone the cents error
+next to it. That name is why Tunes no longer reserves a readout strip above the
+staff: it said the same thing, a hundred pixels further from where the eye
+already was. `readoutBounds` is empty in tune mode and the staff takes the room.
+Live mode keeps the full readout, tuner meter and all, because there the readout
+*is* the page.
+
+Colour follows the source, matching the live view: blue for MIDI, orange for the
+microphone.
+
+## A run that ends, and one that goes round again
+
+`checkComplete()` used to fire `onComplete` and leave `running` true, so a
+finished run went on waiting for notes that had all been answered - and the
+transport, the click and the Stop button all carried on with it. It now clears
+`running`. Every caller has `checkComplete()` as its last statement, so this
+cannot surprise one of them half way through.
+
+Two things had to move with it, and both were caught by tests rather than by
+looking at the app:
+
+- `getCompletedCount()` reads `targetIndex` in step mode, so clearing that as
+  well silently reported nothing completed. Only `running` is cleared;
+  `getTargetIndex()` already returns -1 once it is.
+- `isComplete()` was guarded on `running`, which made it false the moment the
+  run it describes had finished. The guard is gone - "did that run reach the
+  end?" is a question asked *after* the run, and `outcomes.empty()` is the
+  guard that matters.
+
+**Loop** then restarts it. `MainComponent` holds `loopPending` and
+`loopRestartAtMs`; `onComplete` arms them, `timerCallback` fires
+`beginRehearsal()` when the pause is up, and pressing Stop during the pause
+cancels rather than skipping it. The pause is two seconds - long enough to read
+the marked-up score, short enough to still feel continuous - and the countdown
+runs in the progress label.
+
+**The run review** (`setReview`, `drawReviewMarks`) marks the score up after a
+run. The joining trick is that `LaidOutEvent::colourIndex` already carries "the
+note this belongs to, tails included", so a tied note is marked across both
+halves without any extra work.
+
+The rule is *only mark trouble*. Colouring every note makes the page uniform
+and the eye has nowhere to land; the whole value is going straight to the two
+bars that went wrong.
+
+| State | Notehead | Mark |
+|---|---|---|
+| clean | ink | none |
+| wrong note first | amber | `?`, or the number of tries |
+| missed | red | a cross |
+| early / late | ink | a triangle pointing the way it went |
+| never reached | dim | none |
+
+Marks live in a lane above the staff. The lane is real layout - `systemSliceSpaces()`
+grows the system when a review is showing - rather than something squeezed into
+the gap, because ledger lines and beams already live up there. Printed pages
+never get the lane, so an exported PDF stays clean.
+
+Every state is distinguished by shape as well as colour: red and green are not
+a safe pair to depend on, and the palette already spends both.
+
+The late threshold is not invented here - it comes from `TimingSettings::goodMs`,
+the same window the engine scores with, so the marks and the printed summary
+can never disagree.
+
+A review is cleared by anything that makes it untrue: starting another run,
+editing the notes (`pushUndo`), or loading a different tune (`setMelody`).
+
+`ui::NoteReview` and `ui::LiveNote` are plain structs in the UI layer, so the
+staff can be drawn and tested without knowing `practice::` exists - the same
+separation `RehearsalEngine` keeps from the audio side. `MainComponent` is where
+the two meet.
+
 ## Where the controls live
 
 Most settings are chosen once and then left alone - which instrument, what
@@ -558,6 +651,11 @@ singer. Everything else on the original plan is in.
 3. ~~**Rehearsal + playback** - state machine, MIDI matching, reference playback.~~ - done.
 4. **Voice matching** - built and wired; needs tuning against a real voice.
 5. ~~**Beaming**~~ - done. Tuplets remain out of scope.
+6. ~~**Run review and live input display**~~ - done. The natural follow-ons are
+   keeping the reviews rather than discarding them at the end of the run, and
+   using what they say to set the grade: the four dials mean errors can be
+   attributed to intervals, rhythm, key or length separately, which one
+   difficulty slider cannot do.
 
 Beaming sat after rehearsal deliberately: it is cosmetic and did not block
 practising, which is why it waited until the material was worth reading.

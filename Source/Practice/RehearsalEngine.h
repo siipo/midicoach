@@ -103,6 +103,9 @@ public:
     void stop();
 
     bool isRunning() const noexcept { return running; }
+    /** Every note answered, one way or the other. Stays true after the run has
+        finished and stopped itself, so it can be asked about a run that is
+        over as well as one still going. */
     bool isComplete() const noexcept;
 
     /** The note being waited for, or -1. */

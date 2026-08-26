@@ -12,7 +12,12 @@ namespace
 {
     /** Vertical budget for one system, in staff spaces: the staff itself is 4,
         the rest is room for ledger lines, stems and flags. */
-    constexpr float systemHeightSpaces = 12.0f;
+    constexpr float baseSystemHeightSpaces = 12.0f;
+
+    /** Extra room above the staff for the review lane. The marks have to live
+        somewhere that cannot collide with ledger lines, stems or beams, so the
+        system grows rather than the marks being squeezed in among the music. */
+    constexpr float reviewLaneSpaces = 2.4f;
 
     /** How big one staff space is on screen. Fixed rather than fitted, because
         a readable staff matters more than seeing the whole tune at once - past
@@ -63,6 +68,7 @@ void MelodyStaffComponent::setMelody (const model::Melody& newMelody)
     redoStack.clear();
     selectionStart  = 0;
     selectionLength = 0;
+    review.clear();
 
     melody = newMelody;
     rebuildLayout();
@@ -100,6 +106,93 @@ void MelodyStaffComponent::setCompletedCount (int count)
         completedCount = count;
         repaint();
     }
+}
+
+void MelodyStaffComponent::setReview (std::vector<NoteReview> newReview,
+                                      double lateThresholdMs)
+{
+    review       = std::move (newReview);
+    reviewLateMs = juce::jmax (1.0, lateThresholdMs);
+
+    // The lane changes the height of every system, so this is a layout change
+    // and not merely a repaint.
+    rebuildLayout();
+    repaint();
+}
+
+void MelodyStaffComponent::clearReview()
+{
+    if (review.empty())
+        return;
+
+    review.clear();
+    rebuildLayout();
+    repaint();
+}
+
+void MelodyStaffComponent::setLiveNote (LiveNote note)
+{
+    // Repaint only when something visible actually moved. This is fed from a
+    // timer several times a second, and a sung note wanders by a cent or two
+    // the whole time it is held.
+    const auto samePitch = liveNote.active == note.active
+                             && liveNote.midiNote == note.midiNote
+                             && liveNote.fromVoice == note.fromVoice;
+
+    if (samePitch && std::abs (liveNote.cents - note.cents) < 4.0)
+        return;
+
+    liveNote = note;
+
+    if (showLiveNote)
+        repaint();
+}
+
+void MelodyStaffComponent::setShowLiveNote (bool shouldShow)
+{
+    if (showLiveNote == shouldShow)
+        return;
+
+    showLiveNote = shouldShow;
+    repaint();
+}
+
+float MelodyStaffComponent::systemSliceSpaces() const noexcept
+{
+    // Printed pages are never marked up, so they keep the tighter spacing.
+    return baseSystemHeightSpaces
+             + ((! review.empty() && ! printMode) ? reviewLaneSpaces : 0.0f);
+}
+
+const NoteReview* MelodyStaffComponent::reviewFor (const LaidOutEvent& event) const
+{
+    // colourIndex rather than rehearsalIndex, so the tail of a tied note is
+    // marked as the note it belongs to instead of looking untouched.
+    if (event.isRest || event.colourIndex < 0)
+        return nullptr;
+
+    for (const auto& entry : review)
+        if (entry.rehearsalIndex == event.colourIndex)
+            return &entry;
+
+    return nullptr;
+}
+
+const MelodyStaffComponent::LaidOutEvent* MelodyStaffComponent::anchorEvent() const
+{
+    if (targetIndex >= 0)
+        for (const auto& event : laidOut)
+            if (event.colourIndex == targetIndex)
+                return &event;
+
+    if (playheadTick >= 0)
+        if (const auto* event = eventForTick (playheadTick))
+            return event;
+
+    if (const auto* event = eventForTick (caretTick))
+        return event;
+
+    return laidOut.empty() ? nullptr : &laidOut.front();
 }
 
 void MelodyStaffComponent::setPrintMode (bool shouldPrint)
@@ -270,7 +363,7 @@ void MelodyStaffComponent::rebuildLayout()
     // is fixed at something comfortable and the component grows instead, and
     // whatever holds it scrolls.
     staffSpace = printMode ? juce::jlimit (5.0f, 48.0f,
-                                           bounds.getHeight() / (2.0f * systemHeightSpaces))
+                                           bounds.getHeight() / (2.0f * systemSliceSpaces()))
                            : screenStaffSpace;
 
     std::vector<float> measureWidths;
@@ -341,18 +434,19 @@ void MelodyStaffComponent::rebuildLayout()
         if (! printMode)
             break;
 
-        const auto requiredHeight = (float) systems.size() * systemHeightSpaces * staffSpace;
+        const auto requiredHeight = (float) systems.size() * systemSliceSpaces() * staffSpace;
 
         if (requiredHeight <= bounds.getHeight() || staffSpace <= 5.0f)
             break;
 
         staffSpace = juce::jmax (5.0f, bounds.getHeight()
-                                         / ((float) systems.size() * systemHeightSpaces));
+                                         / ((float) systems.size() * systemSliceSpaces()));
     }
 
     // --- place everything horizontally ---------------------------------------
     const auto font = musicFont::fontForStaffSpace (staffSpace);
-    const auto systemHeight = systemHeightSpaces * staffSpace;
+    const auto systemHeight = systemSliceSpaces() * staffSpace;
+    const auto laneHeight = (systemSliceSpaces() - baseSystemHeightSpaces) * staffSpace;
 
     measureRight.assign ((size_t) measures, 0.0f);
 
@@ -362,7 +456,10 @@ void MelodyStaffComponent::rebuildLayout()
 
         // Sit the staff a little below the middle of its slice, leaving more
         // room above for ledger lines and stems than below.
-        system.bottomLineY = bounds.getY() + (float) systemIndex * systemHeight + systemHeight * 0.62f;
+        // The review lane is taken off the top, so adding it pushes the music
+        // down rather than reflowing it.
+        system.bottomLineY = bounds.getY() + (float) systemIndex * systemHeight + laneHeight
+                               + baseSystemHeightSpaces * staffSpace * 0.62f;
 
         auto x = bounds.getX() + staffSpace * 0.4f
               + staffLayout::getClefWidth (font, treble) * 1.3f
@@ -449,8 +546,10 @@ void MelodyStaffComponent::keepTickVisible (int tick)
     if (systemIndex < 0 || systemIndex >= (int) systems.size())
         return;
 
-    const auto systemHeight = systemHeightSpaces * staffSpace;
-    const auto top = systems[(size_t) systemIndex].bottomLineY - systemHeight * 0.62f;
+    const auto systemHeight = systemSliceSpaces() * staffSpace;
+    const auto top = systems[(size_t) systemIndex].bottomLineY
+                       - baseSystemHeightSpaces * staffSpace * 0.62f
+                       - (systemSliceSpaces() - baseSystemHeightSpaces) * staffSpace;
 
     onKeepVisible (juce::Rectangle<int> (0, (int) top, getWidth(), (int) std::ceil (systemHeight)));
 }
@@ -734,6 +833,24 @@ juce::Colour MelodyStaffComponent::colourForEvent (const LaidOutEvent& event) co
     if (event.isRest)
         return palette::inkDim;
 
+    // A marked-up run takes over the colouring: it is shown when nothing is
+    // running, so there is no target or progress to compete with.
+    if (const auto* outcome = reviewFor (event))
+    {
+        if (! outcome->reached)
+            return palette::inkDim;         // never got this far
+
+        if (! outcome->hit)
+            return palette::outOfTune;      // missed
+
+        if (outcome->wrongNotes > 0)
+            return palette::detectedNote;   // found, but hunted for
+
+        // Clean, or late but correct. Timing is shown by the arrow rather than
+        // the notehead, so reading trouble and rhythm trouble stay apart.
+        return palette::ink;
+    }
+
     if (event.colourIndex >= 0 && event.colourIndex == targetIndex)
         return palette::detectedNote;
 
@@ -741,6 +858,194 @@ juce::Colour MelodyStaffComponent::colourForEvent (const LaidOutEvent& event) co
         return palette::midiNote;
 
     return palette::ink;
+}
+
+//==============================================================================
+/** The lane above the staff: what went wrong, and nothing about what went right.
+
+    Marks are drawn rather than set in a font, so they do not depend on the
+    system having a glyph for an arrow, and every state is told apart by shape
+    as well as by colour - red and green are not a safe pair to rely on.
+*/
+void MelodyStaffComponent::drawReviewMarks (juce::Graphics& g, const StaffGeometry& geometry,
+                                            int systemIndex) const
+{
+    if (review.empty() || printMode)
+        return;
+
+    const auto laneY  = geometry.topLineY() - staffSpace * 1.9f;
+    const auto size   = staffSpace * 0.62f;
+    const auto stroke = juce::jmax (1.4f, staffSpace * 0.13f);
+
+    for (const auto& event : laidOut)
+    {
+        if (event.systemIndex != systemIndex || event.isRest)
+            continue;
+
+        // Only the head of a tie carries the mark; the tail is the same note.
+        if (event.rehearsalIndex < 0)
+            continue;
+
+        const auto* outcome = reviewFor (event);
+
+        if (outcome == nullptr || ! outcome->reached)
+            continue;
+
+        const auto late  = outcome->hit && outcome->timingKnown
+                             && std::abs (outcome->timingErrorMs) > reviewLateMs;
+        const auto pitch = ! outcome->hit || outcome->wrongNotes > 0;
+
+        if (! late && ! pitch)
+            continue;
+
+        // Two marks share the slot when both apply, so neither hides the other.
+        const auto centre = event.x + size * 0.4f;
+        auto pitchX = centre;
+        auto lateX  = centre;
+
+        if (late && pitch)
+        {
+            pitchX = centre - size * 0.62f;
+            lateX  = centre + size * 0.62f;
+        }
+
+        if (pitch)
+        {
+            const auto half = size * 0.5f;
+
+            if (! outcome->hit)
+            {
+                // Missed: a cross.
+                g.setColour (palette::outOfTune);
+                g.drawLine (pitchX - half, laneY - half, pitchX + half, laneY + half, stroke);
+                g.drawLine (pitchX - half, laneY + half, pitchX + half, laneY - half, stroke);
+            }
+            else
+            {
+                // Found in the end, but hunted for first - and how many tries it
+                // took is the interesting part.
+                g.setColour (palette::detectedNote);
+                g.setFont (juce::Font (size * 1.5f, juce::Font::bold));
+                g.drawText (outcome->wrongNotes > 1 ? juce::String (outcome->wrongNotes)
+                                                    : juce::String ("?"),
+                            juce::Rectangle<float> (pitchX - size, laneY - size,
+                                                    size * 2.0f, size * 2.0f),
+                            juce::Justification::centred, false);
+            }
+        }
+
+        if (late)
+        {
+            // A triangle pointing the way the note went: right is late.
+            const auto behind = outcome->timingErrorMs > 0.0;
+            const auto half   = size * 0.45f;
+
+            juce::Path arrow;
+            arrow.startNewSubPath (lateX + (behind ? half : -half), laneY);
+            arrow.lineTo (lateX + (behind ? -half : half), laneY - half);
+            arrow.lineTo (lateX + (behind ? -half : half), laneY + half);
+            arrow.closeSubPath();
+
+            g.setColour (palette::midiNote);
+            g.fillPath (arrow);
+        }
+    }
+}
+
+//==============================================================================
+/** What is actually coming out of the microphone or the keyboard, drawn beside
+    the note being read.
+
+    A sung note is placed at the pitch it really was, nudged off the line by
+    however many cents it missed by, so sitting consistently under the note is
+    something you can see rather than something you have to be told.
+*/
+void MelodyStaffComponent::drawLiveNote (juce::Graphics& g, const juce::Font& font) const
+{
+    if (! showLiveNote || ! liveNote.active || printMode || systems.empty())
+        return;
+
+    const auto* anchor = anchorEvent();
+
+    if (anchor == nullptr || anchor->systemIndex < 0
+         || anchor->systemIndex >= (int) systems.size())
+        return;
+
+    const auto geometry = geometryForSystem (systems[(size_t) anchor->systemIndex]);
+    const auto spelled  = scale.spell (liveNote.midiNote);
+    const auto step     = spelled.diatonicStep();
+
+    // Off-centre by however far the pitch missed by, capped so that a wild
+    // reading cannot draw the head somewhere it does not belong.
+    const auto drift = liveNote.fromVoice
+        ? (float) juce::jlimit (-50.0, 50.0, liveNote.cents) / 100.0f * staffSpace * 0.5f
+        : 0.0f;
+
+    const auto y      = geometry.yForStep (step) - drift;
+    const auto glyph  = musicFont::noteheadWhole;
+    const auto width  = musicFont::getGlyphWidth (font, glyph);
+    const auto x      = anchor->x + width * 1.9f;
+    const auto colour = liveNote.fromVoice ? palette::detectedNote : palette::midiNote;
+
+    // The note's name travels with it. Reading a position off the staff is the
+    // skill being practised, but when you are trying to work out what went
+    // wrong you want to be told - and being told here, on the note, beats
+    // looking away to a readout somewhere else on the window.
+    auto label = spelled.toString();
+
+    if (liveNote.fromVoice)
+        label << "  " << (liveNote.cents >= 0.0 ? "+" : "")
+              << juce::String (liveNote.cents, 0)
+              << juce::String::charToString ((juce::juce_wchar) 0x00a2);
+
+    const juce::Font labelFont (staffSpace * 1.05f, juce::Font::bold);
+    const auto labelWidth = labelFont.getStringWidthFloat (label);
+
+    // How far off, at a glance: a line from the written note to where the voice
+    // actually landed. When the two agree it has no length and vanishes, which
+    // is the whole readout - no line means you are on the note.
+    const auto writtenY = geometry.yForStep (anchor->spelled.diatonicStep());
+
+    if (std::abs (writtenY - y) > staffSpace * 0.3f)
+    {
+        g.setColour (colour.withAlpha (0.6f));
+        g.drawLine (anchor->x + width, writtenY, x, y,
+                    juce::jmax (1.0f, staffSpace * 0.1f));
+    }
+
+    // An opaque plate with an edge to it. This lands among music that is none
+    // of its business, so it has to read as something laid over the page rather
+    // than as another notehead - especially when the tune is close-spaced and
+    // it ends up next to a real one.
+    const auto plate = juce::Rectangle<float> (x - width * 0.45f, y - staffSpace * 0.95f,
+                                               width * 1.5f + labelWidth + staffSpace * 0.7f,
+                                               staffSpace * 1.9f);
+    g.setColour (palette::panel);
+    g.fillRoundedRectangle (plate, staffSpace * 0.28f);
+    g.setColour (colour.withAlpha (0.55f));
+    g.drawRoundedRectangle (plate, staffSpace * 0.28f,
+                            juce::jmax (1.0f, staffSpace * 0.08f));
+
+    staffLayout::drawLedgerLines (g, geometry, step, x, width,
+                                  palette::staffLine.withAlpha (0.7f));
+
+    if (spelled.needsAccidental)
+    {
+        const auto accidental = staffLayout::getAccidentalGlyph (spelled.alter);
+
+        g.setColour (colour);
+        musicFont::drawGlyph (g, font, accidental,
+                              x - musicFont::getGlyphWidth (font, accidental) * 1.15f, y);
+    }
+
+    g.setColour (colour);
+    musicFont::drawGlyph (g, font, glyph, x, y);
+
+    g.setFont (labelFont);
+    g.drawText (label,
+                juce::Rectangle<float> (x + width * 1.2f, y - staffSpace,
+                                        labelWidth + staffSpace * 0.4f, staffSpace * 2.0f),
+                juce::Justification::centredLeft, false);
 }
 
 //==============================================================================
@@ -768,6 +1073,7 @@ void MelodyStaffComponent::paint (juce::Graphics& g)
         const auto  geometry = geometryForSystem (system);
 
         drawSelection (g, geometry, (int) systemIndex);
+        drawReviewMarks (g, geometry, (int) systemIndex);
         drawSystemFurniture (g, system, font, systemIndex == 0);
         drawBarLines (g, geometry, system);
         drawBeams (g, geometry, (int) systemIndex);
@@ -792,6 +1098,7 @@ void MelodyStaffComponent::paint (juce::Graphics& g)
     }
 
     drawPlayhead (g);
+    drawLiveNote (g, font);
 
     // Only while writing: a caret means "the next thing you type lands here",
     // which is not true when the click selects instead.
@@ -982,6 +1289,10 @@ void MelodyStaffComponent::mouseDown (const juce::MouseEvent& event)
 
 void MelodyStaffComponent::pushUndo()
 {
+    // Changing the notes makes a review of them meaningless: the marks are
+    // indexed by position, and the note that was missed may no longer be there.
+    review.clear();
+
     undoStack.push_back (melody);
 
     if (undoStack.size() > maxUndoDepth)

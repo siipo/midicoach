@@ -90,6 +90,13 @@ private:
     void buildExerciseControls();
     void layoutExerciseControls (juce::Rectangle<int> row);
     void buildPanels();
+    /** Marks the score up with how the run that just ended went. */
+    void showRunReview();
+
+    /** Waiting out the pause between one loop of the tune and the next. */
+    bool   loopPending     = false;
+    double loopRestartAtMs = 0.0;
+
     void togglePanel (ui::SettingsPanel& panel, juce::Component& anchor);
     void hidePanels();
     void syncEditControls();
@@ -157,6 +164,10 @@ private:
     juce::ComboBox rootCombo, scaleCombo, pluginCombo;
     juce::Label rootLabel, scaleLabel;
 
+    /** Without one of these on screen, setTooltip is silently a no-op - JUCE
+        has nowhere to draw. Every tooltip in the app depends on this existing. */
+    juce::TooltipWindow tooltipWindow { this, 600 };
+
     // Settings that are chosen once and then left alone. Keeping them a click
     // away rather than permanently on screen is what makes room for the staff.
     ui::SettingsPanel instrumentPanel { "Instrument" };
@@ -219,6 +230,7 @@ private:
     juce::TextButton hearKeyButton  { "Hear key" };
     juce::ToggleButton rhythmOnlyToggle { "Rhythm only" };
     juce::ToggleButton prepareToggle    { "Look first" };
+    juce::ToggleButton loopToggle       { "Loop" };
 
     /** Half a minute to read the exercise through before it starts, which is
         both what an exam allows and the part of sight-reading that is actually
@@ -227,6 +239,7 @@ private:
     bool   preparing = false;
     juce::Label progressLabel;
     juce::ToggleButton anyOctaveToggle { "Any octave" };
+    juce::ToggleButton showMyNotesToggle { "Show my notes" };
     juce::ToggleButton voiceSourceToggle { "Voice" };
     juce::ToggleButton midiSourceToggle  { "MIDI" };
     juce::Slider toleranceSlider { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };

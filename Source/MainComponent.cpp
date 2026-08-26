@@ -215,6 +215,7 @@ void MainComponent::buildPanels()
 
     matchingPanel.addToggles (midiSourceToggle, voiceSourceToggle);
     matchingPanel.addRow ({}, anyOctaveToggle);
+    matchingPanel.addRow ({}, showMyNotesToggle);
     matchingPanel.addRow ("Tolerance", toleranceSlider);
 
     for (auto* panel : { &instrumentPanel, &exerciseOptionsPanel, &matchingPanel,
@@ -1090,9 +1091,30 @@ void MainComponent::buildRehearsalControls()
     prepareToggle.setTooltip ("Half a minute to read it through before it starts, "
                               "the way an exam gives you");
 
+    addChildComponent (loopToggle);
+
+    // Round again on its own. Reading the same four bars over and over is how
+    // a phrase stops being decoded and starts being read, and stopping to
+    // press a button every time breaks exactly the flow that is being built.
+    loopToggle.setToggleState (false, juce::dontSendNotification);
+    loopToggle.setTooltip ("Start the tune again from the top once the last note "
+                           "has been played, so a phrase can be read round and round");
+
     progressLabel.setColour (juce::Label::textColourId, palette::ink);
     progressLabel.setFont (juce::Font (13.0f));
     addChildComponent (progressLabel);
+
+    // On by default, because being able to see the note you actually produced
+    // is the point of practising with a microphone in front of you.
+    showMyNotesToggle.setToggleState (true, juce::dontSendNotification);
+    showMyNotesToggle.setTooltip ("Draw the note you are playing or singing beside "
+                                  "the written one, right or wrong");
+    showMyNotesToggle.onClick = [this]
+    {
+        melodyStaff.setShowLiveNote (showMyNotesToggle.getToggleState());
+    };
+
+    melodyStaff.setShowLiveNote (true);
 
     anyOctaveToggle.setToggleState (true, juce::dontSendNotification);
     anyOctaveToggle.setTooltip ("Match by note name, ignoring which octave you sing it in");
@@ -1137,7 +1159,21 @@ void MainComponent::buildRehearsalControls()
 
     rehearsal.onComplete = [this]
     {
+        // The engine has already stopped itself; the click and the playhead
+        // belong to us and have to be stopped too.
+        metronome.stop();
         melodyStaff.setTargetIndex (-1);
+        melodyStaff.setPlayheadTick (-1);
+        showRunReview();
+
+        if (loopToggle.getToggleState() && ! rehearsal.getNotes().empty())
+        {
+            // A breath before going round again: long enough to see how that
+            // one went, short enough that it still feels continuous.
+            loopPending     = true;
+            loopRestartAtMs = juce::Time::getMillisecondCounterHiRes() + 2000.0;
+        }
+
         syncRehearsalControls();
     };
 
@@ -1174,6 +1210,7 @@ void MainComponent::layoutRehearsalControls (juce::Rectangle<int> row)
     row.removeFromLeft (4);
     rhythmOnlyToggle.setBounds (row.removeFromLeft (98));
     prepareToggle.setBounds (row.removeFromLeft (88));
+    loopToggle.setBounds (row.removeFromLeft (58));
 
     row.removeFromLeft (6);
     tempoLabel.setBounds (row.removeFromLeft (44));
@@ -1303,7 +1340,9 @@ void MainComponent::startTimedRehearsal()
 
 void MainComponent::beginRehearsal()
 {
-    preparing = false;
+    preparing   = false;
+    loopPending = false;
+    melodyStaff.clearReview();
 
     if (rehearsal.getMode() == practice::RehearsalMode::inTime)
     {
@@ -1322,6 +1361,41 @@ void MainComponent::beginRehearsal()
     syncRehearsalControls();
 }
 
+/** Turns the engine's outcomes into something the staff can draw.
+
+    The staff is deliberately kept ignorant of practice::, so this is where the
+    two meet - and the late threshold comes from the engine's own timing window
+    rather than being invented here, so the marks agree with the score it
+    prints.
+*/
+void MainComponent::showRunReview()
+{
+    const auto& outcomes = rehearsal.getOutcomes();
+    const auto timed = rehearsal.getMode() == practice::RehearsalMode::inTime;
+
+    std::vector<ui::NoteReview> review;
+    review.reserve (outcomes.size());
+
+    for (const auto& outcome : outcomes)
+    {
+        ui::NoteReview entry;
+        entry.rehearsalIndex = outcome.index;
+        entry.reached        = outcome.resolved;
+        entry.hit            = outcome.hit;
+        entry.wrongNotes     = outcome.wrongNotes;
+        entry.timingErrorMs  = outcome.timingErrorMs;
+        entry.centsError     = outcome.centsError;
+
+        // Step mode waits however long you take, so there is no timing to judge
+        // and an arrow would be meaningless.
+        entry.timingKnown    = timed;
+
+        review.push_back (entry);
+    }
+
+    melodyStaff.setReview (std::move (review), rehearsal.getTimingSettings().goodMs);
+}
+
 void MainComponent::toggleRehearsal()
 {
     if (preparing)
@@ -1331,11 +1405,23 @@ void MainComponent::toggleRehearsal()
         return;
     }
 
+    if (loopPending)
+    {
+        // Pressing Stop during the pause means "stop", not "skip the wait".
+        loopPending = false;
+        syncRehearsalControls();
+        return;
+    }
+
     if (rehearsal.isRunning())
     {
         rehearsal.stop();
         metronome.stop();
         melodyStaff.setPlayheadTick (-1);
+
+        // Stopping half way through still leaves something worth looking at:
+        // where it fell apart is usually why it was stopped.
+        showRunReview();
     }
     else if (prepareToggle.getToggleState()
               && ! melodyStaff.getMelody().getRehearsalNotes().empty())
@@ -1376,16 +1462,10 @@ void MainComponent::syncRehearsalControls()
         return;
     }
 
-    if (! running)
-    {
-        progressLabel.setText (juce::String (total) + " notes ready",
-                               juce::dontSendNotification);
-        return;
-    }
-
-    const auto index = rehearsal.getTargetIndex();
-
-    if (index < 0)
+    // How the last run went. A finished run stops the engine, so this has to be
+    // told apart from never having started one - the marked-up score is the
+    // thing that says a run happened.
+    auto summariseRun = [this, total]
     {
         auto text = "done - " + juce::String (total) + " notes";
 
@@ -1409,7 +1489,33 @@ void MainComponent::syncRehearsalControls()
             text << ", " << rehearsal.getTotalWrongNotes() << " wrong";
         }
 
-        progressLabel.setText (text, juce::dontSendNotification);
+        return text;
+    };
+
+    if (! running)
+    {
+        if (loopPending)
+        {
+            const auto remaining = loopRestartAtMs - juce::Time::getMillisecondCounterHiRes();
+
+            progressLabel.setText (summariseRun() + "   again in "
+                                     + juce::String (juce::jmax (0.0, remaining) / 1000.0, 1)
+                                     + "s",
+                                   juce::dontSendNotification);
+            return;
+        }
+
+        progressLabel.setText (melodyStaff.hasReview() ? summariseRun()
+                                                       : juce::String (total) + " notes ready",
+                               juce::dontSendNotification);
+        return;
+    }
+
+    const auto index = rehearsal.getTargetIndex();
+
+    if (index < 0)
+    {
+        progressLabel.setText (summariseRun(), juce::dontSendNotification);
         return;
     }
 
@@ -1518,7 +1624,7 @@ void MainComponent::updateMode()
         &modeCombo, &tempoLabel, &tempoSlider, &clickToggle, &matchingButton,
         &generateButton, &gradeCombo, &intervalCombo, &rhythmCombo, &keyLevelCombo,
         &lengthCombo, &exerciseLabel, &exerciseOptionsButton,
-        &hearKeyButton, &rhythmOnlyToggle, &prepareToggle
+        &hearKeyButton, &rhythmOnlyToggle, &prepareToggle, &loopToggle
     };
 
     for (auto* control : tuneControls)
@@ -1741,6 +1847,14 @@ void MainComponent::timerCallback()
 
     feedMidiToRehearsal();
 
+    if (loopPending)
+    {
+        if (juce::Time::getMillisecondCounterHiRes() >= loopRestartAtMs)
+            beginRehearsal();       // clears loopPending on the way through
+        else
+            syncRehearsalControls();
+    }
+
     if (preparing)
     {
         const auto remaining = preparationEndsAtMs - juce::Time::getMillisecondCounterHiRes();
@@ -1775,6 +1889,28 @@ void MainComponent::timerCallback()
                                               : juce::Time::getMillisecondCounterHiRes());
 
     const auto detected = snapshot.hasPitch ? snapshot.nearestNote : -1;
+
+    // What is actually being played or sung, drawn beside the note being read.
+    // Rehearsal only ever moves on a correct note, so without this a wrong note
+    // leaves no trace at all and you cannot see that you are a third flat.
+    // MIDI wins over the microphone when both are going, because it is exact.
+    ui::LiveNote live;
+
+    if (! heldMidiNotes.isEmpty())
+    {
+        live.active   = true;
+        live.midiNote = heldMidiNotes.getLast();
+    }
+    else if (snapshot.hasPitch
+              && snapshot.confidence >= rehearsal.getVoiceSettings().minConfidence)
+    {
+        live.active    = true;
+        live.midiNote  = snapshot.nearestNote;
+        live.cents     = snapshot.cents;
+        live.fromVoice = true;
+    }
+
+    melodyStaff.setLiveNote (live);
 
     notation.setMidiNotes (heldMidiNotes);
     notation.setDetectedNote (detected);
@@ -1971,9 +2107,19 @@ void MainComponent::resized()
         area.removeFromTop (8);
     }
 
-    readoutBounds = area.removeFromTop (100);
-
-    area.removeFromTop (10);
+    // In Tunes the note being played is drawn on the staff itself, beside the
+    // note being read, so a separate readout strip is a hundred pixels of staff
+    // given away to say the same thing further from where you are looking.
+    // Live mode is the tuner: there the readout is the whole point.
+    if (tuneMode)
+    {
+        readoutBounds = {};
+    }
+    else
+    {
+        readoutBounds = area.removeFromTop (100);
+        area.removeFromTop (10);
+    }
 
     // The keyboard keeps a fixed slice at the bottom; the staff takes the rest.
     keyboard.setBounds (area.removeFromBottom (juce::jmax (110, area.getHeight() / 4)));

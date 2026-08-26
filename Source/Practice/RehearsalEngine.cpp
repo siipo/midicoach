@@ -77,7 +77,11 @@ void RehearsalEngine::stop()
 
 bool RehearsalEngine::isComplete() const noexcept
 {
-    if (! running || outcomes.empty())
+    // Deliberately not conditioned on running. A finished run stops itself, and
+    // "did that run get to the end?" is a question worth being able to ask
+    // afterwards - which is exactly when it is asked. An empty outcome list is
+    // the guard that stops this being true before anything has been set up.
+    if (outcomes.empty())
         return false;
 
     for (const auto& outcome : outcomes)
@@ -155,6 +159,16 @@ void RehearsalEngine::checkComplete()
         return;
 
     completeFired = true;
+
+    // A finished run stops being a run. Leaving it going meant the engine went
+    // on waiting for notes that had all been answered - so the transport, the
+    // click and the Stop button all carried on with nothing left to match.
+    // Every caller has checkComplete() as its last statement, so clearing this
+    // here cannot surprise one of them half way through.
+    // Only the running flag: getTargetIndex() already reports -1 once that is
+    // clear, while getCompletedCount() still reads targetIndex to know how far
+    // the run got. Clearing it here quietly reported nothing completed.
+    running = false;
 
     if (onComplete != nullptr)
         onComplete();
